@@ -4,6 +4,7 @@ export interface SheetsConfig {
   spreadsheetId: string;
   apiKey: string;
   selectedSheets: string[];
+  appsScriptUrl?: string; // URL Web App để ghi dữ liệu
 }
 
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
@@ -100,6 +101,36 @@ function mapRow(row: unknown[], sheetName: string, rowIndex: number): TaskRow {
     itTaskId:     null,
     lastModified: new Date().toISOString(),
   };
+}
+
+// ─── WRITE via Apps Script Web App ────────────────────────────────────────────
+
+export async function appsScriptPost<T>(appsScriptUrl: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(appsScriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' }, // Apps Script yêu cầu text/plain để tránh CORS preflight
+    body: JSON.stringify(body),
+    redirect: 'follow',
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Apps Script error');
+  return json.data as T;
+}
+
+export async function appsScriptGet<T>(appsScriptUrl: string, params: Record<string, string>): Promise<T> {
+  const url = new URL(appsScriptUrl);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  const res = await fetch(url.toString(), { redirect: 'follow' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error ?? 'Apps Script error');
+  return json.data as T;
+}
+
+export async function testAppsScriptConnection(url: string): Promise<boolean> {
+  const data = await appsScriptGet<{ status: string }>(url, { action: 'ping' });
+  return data.status === 'ok';
 }
 
 // LocalStorage helpers

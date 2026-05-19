@@ -1,11 +1,12 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { X, Link2, Loader2, CheckCircle, AlertCircle, ChevronDown, Trash2 } from 'lucide-react';
+import { X, Link2, Loader2, CheckCircle, AlertCircle, ChevronDown, Trash2, Zap } from 'lucide-react';
 import {
   fetchSheetNames,
   saveSheetsConfig,
   loadSheetsConfig,
   clearSheetsConfig,
+  testAppsScriptConnection,
   type SheetsConfig,
 } from '@/lib/google-sheets';
 
@@ -19,22 +20,41 @@ const PERSONAL_SHEETS = ['Đức Anh', 'Khánh', 'Tuyền', 'Trang', 'Trình', '
 export default function ConnectSheet({ onClose, onConnect }: Props) {
   const [spreadsheetId, setSpreadsheetId] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [appsScriptUrl, setAppsScriptUrl] = useState('');
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [selectedSheets, setSelectedSheets] = useState<string[]>([]);
   const [step, setStep] = useState<'input' | 'select' | 'done'>('input');
   const [loading, setLoading] = useState(false);
+  const [testingScript, setTestingScript] = useState(false);
+  const [scriptOk, setScriptOk] = useState<boolean | null>(null);
   const [error, setError] = useState('');
   const [showApiHelp, setShowApiHelp] = useState(false);
+  const [showScriptHelp, setShowScriptHelp] = useState(false);
 
   useEffect(() => {
     const saved = loadSheetsConfig();
     if (saved) {
       setSpreadsheetId(saved.spreadsheetId);
       setApiKey(saved.apiKey);
+      setAppsScriptUrl(saved.appsScriptUrl ?? '');
       setSelectedSheets(saved.selectedSheets);
       setStep('done');
     }
   }, []);
+
+  async function handleTestScript() {
+    if (!appsScriptUrl.trim()) return;
+    setTestingScript(true);
+    setScriptOk(null);
+    try {
+      const ok = await testAppsScriptConnection(appsScriptUrl.trim());
+      setScriptOk(ok);
+    } catch {
+      setScriptOk(false);
+    } finally {
+      setTestingScript(false);
+    }
+  }
 
   function extractId(input: string): string {
     // Accept full URL or just the ID
@@ -66,7 +86,12 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
   }
 
   function handleSave() {
-    const config: SheetsConfig = { spreadsheetId, apiKey: apiKey.trim(), selectedSheets };
+    const config: SheetsConfig = {
+      spreadsheetId,
+      apiKey: apiKey.trim(),
+      selectedSheets,
+      appsScriptUrl: appsScriptUrl.trim() || undefined,
+    };
     saveSheetsConfig(config);
     onConnect(config);
     setStep('done');
@@ -76,6 +101,8 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
     clearSheetsConfig();
     setSpreadsheetId('');
     setApiKey('');
+    setAppsScriptUrl('');
+    setScriptOk(null);
     setSelectedSheets([]);
     setAvailableSheets([]);
     setStep('input');
@@ -118,6 +145,18 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                     <span key={s} className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">{s}</span>
                   ))}
                 </div>
+              </div>
+              <div className={`flex items-center gap-3 p-3 rounded-xl border text-sm ${
+                appsScriptUrl
+                  ? 'bg-purple-50 border-purple-200 text-purple-800'
+                  : 'bg-gray-50 border-gray-200 text-gray-500'
+              }`}>
+                <Zap size={16} className={appsScriptUrl ? 'text-purple-600' : 'text-gray-400'} />
+                <span>
+                  {appsScriptUrl
+                    ? '✅ Apps Script URL đã cấu hình — Thêm/Sửa task sẽ lưu xuống Sheets'
+                    : '⚠️ Chưa có Apps Script URL — Thêm/Sửa task chỉ lưu tạm trong trình duyệt'}
+                </span>
               </div>
               <div className="flex gap-3">
                 <button
@@ -228,6 +267,59 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                     <p>3. APIs & Services → Enable APIs → bật <strong>Google Sheets API</strong></p>
                     <p>4. Credentials → Create Credentials → <strong>API Key</strong></p>
                     <p>5. (Tuỳ chọn) Restrict key: chỉ cho phép Sheets API + domain của bạn</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Apps Script URL */}
+              <div className="border-t border-gray-100 pt-4">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                    <Zap size={14} className="text-purple-500" />
+                    Apps Script URL <span className="text-gray-400 font-normal">(để ghi task)</span>
+                  </label>
+                  <button
+                    onClick={() => setShowScriptHelp(!showScriptHelp)}
+                    className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-0.5"
+                  >
+                    Hướng dẫn deploy <ChevronDown size={12} className={showScriptHelp ? 'rotate-180' : ''} />
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={appsScriptUrl}
+                    onChange={e => { setAppsScriptUrl(e.target.value); setScriptOk(null); }}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-100 font-mono"
+                  />
+                  {appsScriptUrl.trim() && (
+                    <button
+                      onClick={handleTestScript}
+                      disabled={testingScript}
+                      className="px-3 py-2.5 border border-gray-200 rounded-xl text-xs text-gray-600 hover:bg-gray-50 shrink-0"
+                    >
+                      {testingScript ? <Loader2 size={14} className="animate-spin" /> : 'Test'}
+                    </button>
+                  )}
+                </div>
+                {scriptOk === true && (
+                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                    <CheckCircle size={12} /> Kết nối Apps Script thành công!
+                  </p>
+                )}
+                {scriptOk === false && (
+                  <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                    <AlertCircle size={12} /> Không kết nối được — kiểm tra URL và quyền Deploy
+                  </p>
+                )}
+                {showScriptHelp && (
+                  <div className="mt-2 p-3 bg-purple-50 border border-purple-100 rounded-xl text-xs text-purple-800 space-y-1.5">
+                    <p className="font-medium">Deploy Apps Script Web App:</p>
+                    <p>1. Mở file <strong>Workspace An Khang 2026</strong> → Extensions → Apps Script</p>
+                    <p>2. Dán nội dung file <code className="bg-purple-100 px-1 rounded">apps-script/workspace-api.gs</code> vào cuối editor</p>
+                    <p>3. Click <strong>Deploy → New deployment</strong></p>
+                    <p>4. Type: <strong>Web app</strong> · Execute as: <strong>Me</strong> · Access: <strong>Anyone</strong></p>
+                    <p>5. Deploy → copy URL → dán vào ô trên</p>
                   </div>
                 )}
               </div>
