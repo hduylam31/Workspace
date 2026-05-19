@@ -6,6 +6,7 @@ import { ALL_STATUSES, MEMBERS, STATUS_COLORS } from '@/lib/config';
 import type { TaskRow } from '@/lib/types';
 import StatusBadge from '@/components/StatusBadge';
 import MemberAvatar from '@/components/MemberAvatar';
+import { useSheetsData } from '@/lib/sheets-context';
 
 const ITEMS_PER_PAGE = 50;
 
@@ -25,8 +26,9 @@ function isDueSoon(task: TaskRow) {
 }
 
 export default function OverviewModule() {
-  const [tasks, setTasks] = useState<TaskRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { tasks: sheetsTasks, loading: sheetsLoading, config: sheetsConfig, error: sheetsError } = useSheetsData();
+  const [mockTasks, setMockTasks] = useState<TaskRow[]>([]);
+  const [mockLoading, setMockLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
@@ -38,8 +40,11 @@ export default function OverviewModule() {
   const [editStatus, setEditStatus] = useState('');
 
   useEffect(() => {
-    api.getOverview().then(data => { setTasks(data); setLoading(false); });
+    api.getOverview().then(data => { setMockTasks(data); setMockLoading(false); });
   }, []);
+
+  const tasks = sheetsConfig ? sheetsTasks : mockTasks;
+  const loading = sheetsConfig ? sheetsLoading : mockLoading;
 
   const projects = useMemo(() => [...new Set(tasks.map(t => t.project))].sort(), [tasks]);
 
@@ -83,7 +88,7 @@ export default function OverviewModule() {
 
   async function saveStatus(task: TaskRow) {
     await api.updateTaskStatus(task.id, editStatus);
-    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: editStatus as TaskRow['status'] } : t));
+    setMockTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: editStatus as TaskRow['status'] } : t));
     setEditingId(null);
   }
 
@@ -136,6 +141,19 @@ export default function OverviewModule() {
 
   return (
     <div className="space-y-4">
+      {/* Source indicator */}
+      {sheetsConfig && (
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${
+          sheetsError ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-100'
+        }`}>
+          <span>{sheetsError ? '⚠️' : '✅'}</span>
+          <span>
+            {sheetsError
+              ? `Lỗi khi đọc Google Sheets: ${sheetsError}`
+              : `Đang đọc từ Google Sheets · ${sheetsConfig.selectedSheets.join(', ')} · ${tasks.length} task`}
+          </span>
+        </div>
+      )}
       {/* Filter bar */}
       <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 flex-1 min-w-[200px]">

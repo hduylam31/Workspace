@@ -7,6 +7,7 @@ import type { TaskRow } from '@/lib/types';
 import StatusBadge from '@/components/StatusBadge';
 import MemberAvatar from '@/components/MemberAvatar';
 import TaskForm from './TaskForm';
+import { useSheetsData } from '@/lib/sheets-context';
 
 function isOverdue(task: TaskRow) {
   if (!task.endDate) return false;
@@ -23,23 +24,33 @@ function isDueSoon(task: TaskRow) {
 const ACTIVE_STATUSES = ['Add Sprint', 'Add Xtask', 'In progress', 'Đang dev', 'Nghiệm thu', 'Chuẩn bị làm'];
 
 export default function MyTasksModule() {
+  const { tasks: sheetsTasks, loading: sheetsLoading, config: sheetsConfig } = useSheetsData();
   const [selectedMember, setSelectedMember] = useState(MEMBERS[0].name);
-  const [tasksByMember, setTasksByMember] = useState<Record<string, TaskRow[]>>({});
-  const [loading, setLoading] = useState(false);
+  const [mockTasksByMember, setMockTasksByMember] = useState<Record<string, TaskRow[]>>({});
+  const [mockLoading, setMockLoading] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskRow | null>(null);
 
   useEffect(() => {
-    if (tasksByMember[selectedMember]) return;
-    setLoading(true);
+    if (sheetsConfig) return; // dùng sheets data
+    if (mockTasksByMember[selectedMember]) return;
+    setMockLoading(true);
     api.getMyTasks(selectedMember).then(data => {
-      setTasksByMember(prev => ({ ...prev, [selectedMember]: data }));
-      setLoading(false);
+      setMockTasksByMember(prev => ({ ...prev, [selectedMember]: data }));
+      setMockLoading(false);
     });
-  }, [selectedMember]);
+  }, [selectedMember, sheetsConfig]);
 
-  const tasks = tasksByMember[selectedMember] ?? [];
+  const loading = sheetsConfig ? sheetsLoading : mockLoading;
+  const tasks = sheetsConfig
+    ? sheetsTasks.filter(t => t.owner === selectedMember || t.sourceSheet === selectedMember)
+    : (mockTasksByMember[selectedMember] ?? []);
+
+  // Thành viên có trong sheets data
+  const availableMembers = sheetsConfig
+    ? MEMBERS.filter(m => sheetsConfig.selectedSheets.includes(m.name) || sheetsTasks.some(t => t.owner === m.name))
+    : MEMBERS;
 
   const sorted = useMemo(() => {
     return [...tasks].sort((a, b) => {
@@ -65,7 +76,7 @@ export default function MyTasksModule() {
 
   function handleSave(data: Partial<TaskRow>) {
     if (editingTask) {
-      setTasksByMember(prev => ({
+      setMockTasksByMember(prev => ({
         ...prev,
         [selectedMember]: (prev[selectedMember] ?? []).map(t =>
           t.id === editingTask.id ? { ...t, ...data } : t
@@ -88,7 +99,7 @@ export default function MyTasksModule() {
         itTaskId: null,
         lastModified: new Date().toISOString(),
       };
-      setTasksByMember(prev => ({
+      setMockTasksByMember(prev => ({
         ...prev,
         [selectedMember]: [...(prev[selectedMember] ?? []), newTask],
       }));
@@ -99,8 +110,10 @@ export default function MyTasksModule() {
     <div className="flex gap-4 h-full">
       {/* Member sidebar */}
       <aside className="w-48 shrink-0 space-y-1">
-        {MEMBERS.map(m => {
-          const count = tasksByMember[m.name]?.filter(t => ACTIVE_STATUSES.includes(t.status)).length ?? 0;
+        {(sheetsConfig ? availableMembers : MEMBERS).map(m => {
+          const count = sheetsConfig
+            ? sheetsTasks.filter(t => (t.owner === m.name || t.sourceSheet === m.name) && ACTIVE_STATUSES.includes(t.status)).length
+            : (mockTasksByMember[m.name]?.filter(t => ACTIVE_STATUSES.includes(t.status)).length ?? 0);
           return (
             <button
               key={m.id}

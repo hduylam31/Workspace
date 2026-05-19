@@ -1,5 +1,5 @@
 'use client';
-import { RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import { RefreshCw, Wifi, WifiOff, Link2, CheckCircle2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { MEMBERS } from '@/lib/config';
 
@@ -9,6 +9,8 @@ interface Props {
   lastUpdated: Date | null;
   onRefresh: () => void;
   loading: boolean;
+  onOpenConnect: () => void;
+  isConnected: boolean;
 }
 
 const TABS = [
@@ -18,7 +20,7 @@ const TABS = [
   { id: 'dashboard',  label: 'Dashboard' },
 ];
 
-export default function Header({ activeTab, onTabChange, lastUpdated, onRefresh, loading }: Props) {
+export default function Header({ activeTab, onTabChange, lastUpdated, onRefresh, loading, onOpenConnect, isConnected }: Props) {
   const [online, setOnline] = useState(true);
 
   useEffect(() => {
@@ -59,7 +61,7 @@ export default function Header({ activeTab, onTabChange, lastUpdated, onRefresh,
           </nav>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {lastUpdated && (
             <span className="text-xs text-gray-400 hidden sm:block">
               Cập nhật {lastUpdated.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
@@ -72,7 +74,19 @@ export default function Header({ activeTab, onTabChange, lastUpdated, onRefresh,
           >
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
-          <div className="flex items-center gap-2 text-xs text-gray-500">
+          <button
+            onClick={onOpenConnect}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              isConnected
+                ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {isConnected
+              ? <><CheckCircle2 size={13} /> Google Sheets</>
+              : <><Link2 size={13} /> Kết nối Sheets</>}
+          </button>
+          <div className="flex items-center text-xs text-gray-500">
             {online ? <Wifi size={14} className="text-green-500" /> : <WifiOff size={14} className="text-red-500" />}
           </div>
           <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-xs font-bold">
