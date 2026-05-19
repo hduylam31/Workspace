@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# An Khang PM Workspace
 
-## Getting Started
+Ứng dụng quản lý task nội bộ cho Team PM An Khang — thay thế quy trình Google Sheets thủ công bằng một dashboard web hiện đại.
 
-First, run the development server:
+## Tính năng
+
+- **Overview** — Tổng quan toàn bộ task của team, filter theo owner/status/dự án, quick edit inline
+- **My Tasks** — Xem và quản lý task theo từng thành viên, thêm/sửa task qua form
+- **IT Tracker** — Theo dõi task phối hợp với IT theo tháng, đồng bộ 2 chiều
+- **Dashboard** — KPI cards, biểu đồ tiến độ theo người/tháng, phân bổ theo dự án, roadmap Q1–Q4
+
+## Tech Stack
+
+- **Next.js 15** (App Router, TypeScript)
+- **Tailwind CSS**
+- **Chart.js** + react-chartjs-2
+- **Google Apps Script** (backend API — tuỳ chọn)
+
+## Chạy local
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Mở [http://localhost:3000](http://localhost:3000) — mặc định chạy với **mock data**, không cần cấu hình gì thêm.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy lên Vercel
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Push repo lên GitHub
+2. Import vào [vercel.com](https://vercel.com) → Deploy
+3. Xong! App chạy ngay với mock data.
 
-## Learn More
+## Kết nối Google Sheets thực
 
-To learn more about Next.js, take a look at the following resources:
+1. Deploy Apps Script từ `Workspace An Khang 2026` làm Web App
+2. Tạo `.env.local`:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```env
+NEXT_PUBLIC_APPS_SCRIPT_URL=https://script.google.com/macros/s/YOUR_ID/exec
+NEXT_PUBLIC_USE_MOCK_DATA=false
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+3. Thêm các env vars này vào Vercel Project Settings → Environment Variables
 
-## Deploy on Vercel
+## Cấu trúc project
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+├── app/
+│   ├── layout.tsx
+│   └── page.tsx              # Tabs: Overview | My Tasks | IT Tracker | Dashboard
+├── components/
+│   ├── Header.tsx
+│   ├── StatusBadge.tsx
+│   ├── MemberAvatar.tsx
+│   ├── overview/OverviewModule.tsx
+│   ├── my-tasks/MyTasksModule.tsx
+│   ├── my-tasks/TaskForm.tsx
+│   ├── it-tracker/ITTrackerModule.tsx
+│   └── dashboard/DashboardModule.tsx
+└── lib/
+    ├── api.ts                # API client (mock + real Apps Script)
+    ├── config.ts             # Colors, members, status map
+    ├── mock-data.ts          # Demo data
+    └── types.ts
+```
