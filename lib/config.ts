@@ -6,17 +6,24 @@ export const CONFIG = {
 };
 
 export const STATUS_COLORS: Record<string, { bg: string; text: string; label: string }> = {
-  'Golive':        { bg: '#4CB551', text: '#fff',    label: 'Go Live' },
-  'Go live':       { bg: '#4CB551', text: '#fff',    label: 'Go Live' },
-  'Add Sprint':    { bg: '#4285F4', text: '#fff',    label: 'Add Sprint' },
-  'Add Xtask':     { bg: '#A8C7FA', text: '#1a1a1a', label: 'Add Xtask' },
-  'In progress':   { bg: '#FB8C00', text: '#fff',    label: 'In Progress' },
-  'Đang dev':      { bg: '#FB8C00', text: '#fff',    label: 'Đang dev' },
-  'Nghiệm thu':    { bg: '#9C27B0', text: '#fff',    label: 'Nghiệm thu' },
-  'Done':          { bg: '#757575', text: '#fff',    label: 'Done' },
-  'Xong mô tả':   { bg: '#757575', text: '#fff',    label: 'Xong mô tả' },
-  'Chuẩn bị làm': { bg: '#FFF176', text: '#1a1a1a', label: 'Chuẩn bị làm' },
-  'Định kỳ':      { bg: '#BCAAA4', text: '#1a1a1a', label: 'Định kỳ' },
+  'Golive':                  { bg: '#4CB551', text: '#fff',    label: 'Golive' },
+  'Go live':                 { bg: '#4CB551', text: '#fff',    label: 'Golive' },
+  'Add Sprint':              { bg: '#4285F4', text: '#fff',    label: 'Add Sprint' },
+  'Add Xtask':               { bg: '#A8C7FA', text: '#1a1a1a', label: 'Add Xtask' },
+  'Chờ Add Xtask':           { bg: '#D0E8FF', text: '#1a5fa8', label: 'Chờ Add Xtask' },
+  'In progress':             { bg: '#FB8C00', text: '#fff',    label: 'In progress' },
+  'Đang dev':                { bg: '#FB8C00', text: '#fff',    label: 'Đang dev' },
+  'Nghiệm thu':              { bg: '#9C27B0', text: '#fff',    label: 'Nghiệm thu' },
+  'Chờ review mô tả':        { bg: '#E1BEE7', text: '#6A1B9A', label: 'Chờ review mô tả' },
+  'Done':                    { bg: '#757575', text: '#fff',    label: 'Done' },
+  'Xong mô tả':              { bg: '#757575', text: '#fff',    label: 'Xong mô tả' },
+  'Chuẩn bị làm':            { bg: '#FFF9C4', text: '#1a1a1a', label: 'Chuẩn bị làm' },
+  'Chuẩn bị đưa vào làm':   { bg: '#FFF9C4', text: '#1a1a1a', label: 'Chuẩn bị đưa vào làm' },
+  'Định kỳ':                 { bg: '#BCAAA4', text: '#1a1a1a', label: 'Định kỳ' },
+  'Backlog':                 { bg: '#E0E0E0', text: '#424242', label: 'Backlog' },
+  'Pending':                 { bg: '#FFE0B2', text: '#E65100', label: 'Pending' },
+  'Cancelled':               { bg: '#FFCDD2', text: '#C62828', label: 'Cancelled' },
+  'Follow':                  { bg: '#B2EBF2', text: '#006064', label: 'Follow' },
 };
 
 export const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
@@ -35,6 +42,9 @@ export const MEMBERS = [
 ];
 
 export const ALL_STATUSES = [
-  'Golive', 'Add Sprint', 'Add Xtask', 'In progress', 'Nghiệm thu',
-  'Done', 'Chuẩn bị làm', 'Định kỳ', 'Xong mô tả',
+  'Golive', 'Done', 'Nghiệm thu', 'Add Sprint', 'Add Xtask',
+  'Chờ Add Xtask', 'Chờ review mô tả', 'In progress',
+  'Chuẩn bị đưa vào làm', 'Định kỳ', 'Backlog', 'Pending', 'Cancelled', 'Follow',
 ];
+
+export const ALL_ROLES = ['PO', 'DA', 'PMC', 'PD'];

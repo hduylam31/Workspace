@@ -3,13 +3,21 @@ export type Status =
   | 'Go live'
   | 'Add Sprint'
   | 'Add Xtask'
+  | 'Chờ Add Xtask'
   | 'In progress'
   | 'Đang dev'
   | 'Nghiệm thu'
+  | 'Chờ review mô tả'
   | 'Done'
   | 'Xong mô tả'
   | 'Chuẩn bị làm'
-  | 'Định kỳ';
+  | 'Chuẩn bị đưa vào làm'
+  | 'Định kỳ'
+  | 'Backlog'
+  | 'Pending'
+  | 'Cancelled'
+  | 'Follow'
+  | string;   // cho phép status mới từ Data System
 
 export type Role = 'member' | 'lead' | 'viewer';
 
@@ -20,6 +28,7 @@ export interface TaskRow {
   project: string;
   task: string;
   owner: string;
+  role: string | null;       // Vai trò: PO, DA, PMC, PD...
   status: Status;
   startDate: string | null;
   endDate: string | null;

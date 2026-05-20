@@ -1,8 +1,9 @@
 'use client';
-import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { X, CheckCircle } from 'lucide-react';
 import { api } from '@/lib/api';
-import { ALL_STATUSES } from '@/lib/config';
+import { loadSheetsConfig } from '@/lib/google-sheets';
+import { useDataSystem } from '@/lib/use-data-system';
 import type { TaskRow } from '@/lib/types';
 
 interface Props {
@@ -13,22 +14,27 @@ interface Props {
 }
 
 export default function TaskForm({ task, owner, onClose, onSave }: Props) {
-  const [projects, setProjects] = useState<string[]>([]);
+  const { projects, statuses, roles, loading: dsLoading } = useDataSystem();
   const [form, setForm] = useState({
-    project: task?.project ?? '',
-    task: task?.task ?? '',
-    status: task?.status ?? 'Chuẩn bị làm',
-    detail: task?.detail ?? '',
-    link: task?.link ?? '',
+    project:   task?.project   ?? '',
+    task:      task?.task      ?? '',
+    role:      task?.role      ?? '',
+    status:    task?.status    ?? '',
+    detail:    task?.detail    ?? '',
+    link:      task?.link      ?? '',
     startDate: task?.startDate ?? '',
-    endDate: task?.endDate ?? '',
-    note: task?.note ?? '',
+    endDate:   task?.endDate   ?? '',
+    note:      task?.note      ?? '',
   });
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [saveMsg, setSaveMsg]   = useState('');
+  const [progress, setProgress] = useState(0);
+  const [saved, setSaved]       = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasScript = !!loadSheetsConfig()?.appsScriptUrl;
 
-  useEffect(() => {
-    api.getProjects().then(p => setProjects(p.map(x => x.name)));
-  }, []);
+  // Status hiện tại — fallback về phần tử đầu khi danh sách load xong
+  const currentStatus = form.status || statuses[0] || 'Chuẩn bị đưa vào làm';
 
   function set(key: string, val: string) {
     setForm(prev => ({ ...prev, [key]: val }));
@@ -36,33 +42,77 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.project || !form.task || !form.status) return;
+    if (!form.project || !form.task || !currentStatus) return;
     setSaving(true);
-    const data: Partial<TaskRow> = { ...form, owner, status: form.status as TaskRow['status'] };
-    if (task) data.id = task.id;
-    await api.addTask(data);
-    onSave(data);
-    setSaving(false);
-    onClose();
+    setSaved(false);
+    setProgress(0);
+
+    if (hasScript) {
+      setSaveMsg('Đang lưu xuống Google Sheets...');
+      let p = 0;
+      timerRef.current = setInterval(() => {
+        p += p < 70 ? 8 : p < 90 ? 2 : 0.5;
+        setProgress(Math.min(p, 93));
+      }, 500);
+    }
+
+    try {
+      const data: Partial<TaskRow> = {
+        ...form,
+        status: currentStatus as TaskRow['status'],
+        owner,
+      };
+      if (task) data.id = task.id;
+      const result = await (task
+        ? api.updateTask({ ...data, id: task.id } as TaskRow)
+        : api.addTask(data));
+      if (timerRef.current) clearInterval(timerRef.current);
+      setProgress(100);
+      setSaved(true);
+      setSaveMsg('Đã lưu thành công!');
+      onSave(task ? data : (result as Partial<TaskRow>) ?? data);
+      setTimeout(() => onClose(), 600);
+    } catch (err) {
+      if (timerRef.current) clearInterval(timerRef.current);
+      setProgress(0);
+      setSaveMsg('Lỗi: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
       <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between rounded-t-2xl">
-          <h2 className="font-semibold text-gray-900">{task ? 'Sửa Task' : 'Thêm Task mới'}</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
-            <X size={18} />
-          </button>
+        {/* Header */}
+        <div className="sticky top-0 bg-white border-b border-gray-100 rounded-t-2xl overflow-hidden">
+          <div className="px-5 py-4 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">{task ? 'Sửa Task' : 'Thêm Task mới'}</h2>
+            <button onClick={onClose} disabled={saving} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-40">
+              <X size={18} />
+            </button>
+          </div>
+          {saving && progress > 0 && (
+            <div className="h-1 bg-gray-100">
+              <div
+                className={`h-full transition-all duration-500 ${saved ? 'bg-green-500' : 'bg-blue-500'}`}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
         </div>
+
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {/* Dự án */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Dự án <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Dự án <span className="text-red-500">*</span>
+            </label>
             <input
               list="projects-list"
               value={form.project}
               onChange={e => set('project', e.target.value)}
-              placeholder="Chọn hoặc nhập dự án..."
+              placeholder={dsLoading ? 'Đang tải danh sách...' : 'Chọn hoặc nhập dự án...'}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-200"
               required
             />
@@ -71,8 +121,11 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
             </datalist>
           </div>
 
+          {/* Tên Task */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Tên Task <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Tên Task <span className="text-red-500">*</span>
+            </label>
             <input
               value={form.task}
               onChange={e => set('task', e.target.value)}
@@ -82,17 +135,34 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Status <span className="text-red-500">*</span></label>
-            <select
-              value={form.status}
-              onChange={e => set('status', e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-200"
-            >
-              {ALL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+          {/* Status + Vai trò — 2 cột */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Status <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={currentStatus}
+                onChange={e => set('status', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-200"
+              >
+                {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Vai trò</label>
+              <select
+                value={form.role}
+                onChange={e => set('role', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-200"
+              >
+                <option value="">— Chọn vai trò —</option>
+                {roles.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
           </div>
 
+          {/* Chi tiết */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Chi tiết</label>
             <textarea
@@ -104,6 +174,7 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
             />
           </div>
 
+          {/* Link */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Link (Figma / Google Doc)</label>
             <input
@@ -115,6 +186,7 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
             />
           </div>
 
+          {/* Ngày */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Ngày bắt đầu</label>
@@ -136,6 +208,7 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
             </div>
           </div>
 
+          {/* Ghi chú */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
             <input
@@ -146,20 +219,43 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
             />
           </div>
 
+          {/* Save message */}
+          {saveMsg && (
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
+              saved ? 'bg-green-50 text-green-700' :
+              saveMsg.startsWith('Lỗi') ? 'bg-red-50 text-red-700' :
+              'bg-blue-50 text-blue-700'
+            }`}>
+              {saved && <CheckCircle size={14} />}
+              <span>{saveMsg}</span>
+              {saving && hasScript && !saved && (
+                <span className="text-xs text-blue-500 ml-auto">Apps Script lần đầu ~10s</span>
+              )}
+            </div>
+          )}
+
+          {/* Buttons */}
           <div className="flex gap-3 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              disabled={saving}
+              className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
             >
               Hủy
             </button>
             <button
               type="submit"
-              disabled={saving}
-              className="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-60"
+              disabled={saving || saved}
+              className="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
             >
-              {saving ? 'Đang lưu...' : task ? 'Lưu thay đổi' : 'Thêm Task'}
+              {saved ? <><CheckCircle size={15} /> Đã lưu!</> :
+               saving ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  Đang lưu...
+                </span>
+               ) : task ? 'Lưu thay đổi' : 'Thêm Task'}
             </button>
           </div>
         </form>

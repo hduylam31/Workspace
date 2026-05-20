@@ -27,7 +27,7 @@ export async function fetchSheetTasks(
   apiKey: string,
   sheetName: string,
 ): Promise<TaskRow[]> {
-  const range = encodeURIComponent(`${sheetName}!A:J`);
+  const range = encodeURIComponent(`${sheetName}!A:K`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -92,10 +92,11 @@ function mapRow(row: unknown[], sheetName: string, rowIndex: number): TaskRow {
     owner:        get(3) ?? sheetName,
     detail:       get(4),
     link:         get(5),
-    status:       (get(6) as TaskRow['status']) ?? 'Chuẩn bị làm',
+    status:       (get(6) as TaskRow['status']) ?? 'Chuẩn bị đưa vào làm',
     startDate:    parseDate(row[7]),
     endDate:      parseDate(row[8]),
     note:         get(9),
+    role:         get(10),   // cột K — Vai trò
     sourceSheet:  sheetName,
     sourceRow:    rowIndex,
     itTaskId:     null,
@@ -131,6 +132,53 @@ export async function appsScriptGet<T>(appsScriptUrl: string, params: Record<str
 export async function testAppsScriptConnection(url: string): Promise<boolean> {
   const data = await appsScriptGet<{ status: string }>(url, { action: 'ping' });
   return data.status === 'ok';
+}
+
+// ─── Đọc Data System (Projects + Statuses + Roles) trực tiếp qua API ────────
+
+export async function fetchDataSystemProjects(spreadsheetId: string, apiKey: string): Promise<string[]> {
+  // Cột A = Tên dự án, Cột B = Thứ tự
+  const range = encodeURIComponent('Data System!A2:B');
+  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = await res.json();
+  const rows: unknown[][] = json.values ?? [];
+  return rows
+    .filter(r => r[0] && String(r[0]).trim())
+    .sort((a, b) => (Number(a[1]) || 999) - (Number(b[1]) || 999))
+    .map(r => String(r[0]).trim());
+}
+
+export async function fetchDataSystemStatuses(spreadsheetId: string, apiKey: string): Promise<string[]> {
+  // Cột H = STT, Cột I = Trạng thái
+  const range = encodeURIComponent('Data System!H2:I');
+  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = await res.json();
+  const rows: unknown[][] = json.values ?? [];
+  return rows
+    .filter(r => r[1] && String(r[1]).trim() && String(r[1]).trim() !== 'Trạng thái')
+    .sort((a, b) => (Number(a[0]) || 999) - (Number(b[0]) || 999))
+    .map(r => String(r[1]).trim());
+}
+
+export async function fetchDataSystemRoles(spreadsheetId: string, apiKey: string): Promise<string[]> {
+  // Cột F = Vai trò — lấy unique values
+  const range = encodeURIComponent('Data System!F2:F');
+  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = await res.json();
+  const rows: unknown[][] = json.values ?? [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  rows.forEach(r => {
+    const v = String(r[0] ?? '').trim();
+    if (v && v !== 'Vai trò' && !seen.has(v)) { seen.add(v); result.push(v); }
+  });
+  return result;
 }
 
 // LocalStorage helpers

@@ -1,4 +1,4 @@
-import { CONFIG } from './config';
+import { CONFIG, ALL_STATUSES } from './config';
 import { MOCK_TASKS, MOCK_IT_TASKS, MOCK_DASHBOARD } from './mock-data';
 import { appsScriptPost, appsScriptGet, loadSheetsConfig } from './google-sheets';
 import type { TaskRow, ITTaskRow, DashboardData, ApiResponse } from './types';
@@ -50,6 +50,8 @@ function getMockData<T>(action: string, params?: Record<string, string>): T {
     case 'getDashboard': return MOCK_DASHBOARD as T;
     case 'getProjects':  return [...new Set(MOCK_TASKS.map(t => t.project))].map((p, i) => ({ id: String(i), name: p })) as T;
     case 'getMembers':   return [...new Set(MOCK_TASKS.map(t => t.owner))].map((m, i) => ({ id: String(i), name: m })) as T;
+    case 'getStatuses':  return ALL_STATUSES as T;
+    case 'getRoles':     return ['PO', 'DA', 'PMC', 'PD'] as T;
     default:             return [] as T;
   }
 }
@@ -74,6 +76,12 @@ export const api = {
 
   getMembers:   () =>
     apiFetch<{ id: string; name: string }[]>('getMembers'),
+
+  getStatuses: () =>
+    apiFetch<string[]>('getStatuses'),
+
+  getRoles: () =>
+    apiFetch<string[]>('getRoles'),
 
   updateTaskStatus: (id: string, status: string, note?: string) =>
     apiPost<{ updated: boolean }>('updateTaskStatus', { id, status, ...(note ? { note } : {}) }),

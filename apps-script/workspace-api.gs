@@ -30,6 +30,7 @@ const API_CONFIG = {
     START_DATE: 8,  // H — Bắt đầu
     END_DATE:   9,  // I — Kết thúc
     NOTE:       10, // J — Ghi chú
+    ROLE:       11, // K — Vai trò (PO, DA, PMC, PD...)
   },
   CACHE_TTL: 300, // 5 phút
 };
@@ -45,6 +46,8 @@ function doGet(e) {
       case 'getOverview':  return jsonOk(apiGetOverview());
       case 'getMyTasks':   return jsonOk(apiGetMyTasks(p.member));
       case 'getProjects':  return jsonOk(apiGetProjects());
+      case 'getStatuses':  return jsonOk(apiGetStatuses());
+      case 'getRoles':     return jsonOk(apiGetRoles());
       case 'getMembers':   return jsonOk(apiGetMembers());
       case 'getDashboard': return jsonOk(apiGetDashboard());
       case 'ping':         return jsonOk({ status: 'ok', time: new Date().toISOString() });
@@ -113,6 +116,44 @@ function apiGetProjects() {
   return data.slice(1)
     .filter(function(r) { return r[0] && String(r[0]).trim() !== ''; })
     .map(function(r, i) { return { id: String(i), name: String(r[0]).trim() }; });
+}
+
+function apiGetStatuses() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Data System');
+  if (!sheet) return [
+    'Golive', 'Done', 'Nghiệm thu', 'Add Sprint', 'Add Xtask',
+    'Chờ Add Xtask', 'Chờ review mô tả', 'In progress',
+    'Chuẩn bị đưa vào làm', 'Định kỳ', 'Backlog', 'Pending', 'Cancelled', 'Follow',
+  ];
+  // Cột H = STT, Cột I = Trạng thái (row 2 trở đi)
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const data = sheet.getRange(2, 8, lastRow - 1, 2).getValues(); // H:I
+  return data
+    .filter(function(r) {
+      const v = String(r[1] || '').trim();
+      return v && v !== 'Trạng thái';
+    })
+    .sort(function(a, b) { return (Number(a[0]) || 999) - (Number(b[0]) || 999); })
+    .map(function(r) { return String(r[1]).trim(); });
+}
+
+function apiGetRoles() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Data System');
+  if (!sheet) return ['PO', 'DA', 'PMC', 'PD'];
+  // Cột F = Vai trò (row 2 trở đi) — lấy unique values
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const data = sheet.getRange(2, 6, lastRow - 1, 1).getValues(); // col F
+  const seen = {};
+  const result = [];
+  data.forEach(function(r) {
+    const v = String(r[0] || '').trim();
+    if (v && v !== 'Vai trò' && !seen[v]) { seen[v] = true; result.push(v); }
+  });
+  return result.length ? result : ['PO', 'DA', 'PMC', 'PD'];
 }
 
 function apiGetMembers() {
@@ -213,6 +254,7 @@ function apiAddTask(body) {
     startDate,
     endDate,
     body.note   || '',
+    body.role   || '',   // K — Vai trò
   ];
 
   sheet.appendRow(newRow);
@@ -281,6 +323,7 @@ function apiUpdateTask(body) {
   if (body.note       !== undefined) sheet.getRange(rowIndex, C.NOTE).setValue(body.note || '');
   if (body.startDate  !== undefined) sheet.getRange(rowIndex, C.START_DATE).setValue(body.startDate ? formatDateForSheet(body.startDate) : '');
   if (body.endDate    !== undefined) sheet.getRange(rowIndex, C.END_DATE).setValue(body.endDate ? formatDateForSheet(body.endDate) : '');
+  if (body.role       !== undefined) sheet.getRange(rowIndex, C.ROLE).setValue(body.role || '');
 
   SpreadsheetApp.flush();
   invalidateCache(owner);
@@ -299,7 +342,7 @@ function readSheetTasks(sheetName) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  const data = sheet.getRange(2, 1, lastRow - 1, 10).getValues();
+  const data = sheet.getRange(2, 1, lastRow - 1, 11).getValues(); // A:K
   const C = API_CONFIG.COL;
 
   return data
@@ -319,6 +362,7 @@ function readSheetTasks(sheetName) {
         startDate:    parseSheetDate(row[C.START_DATE - 1]),
         endDate:      parseSheetDate(row[C.END_DATE - 1]),
         note:         String(row[C.NOTE - 1]        || '').trim() || null,
+        role:         String(row[C.ROLE - 1]        || '').trim() || null,
         sourceSheet:  sheetName,
         sourceRow:    idx + 2,
         itTaskId:     null,
