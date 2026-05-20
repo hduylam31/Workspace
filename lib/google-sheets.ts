@@ -137,61 +137,47 @@ export async function testAppsScriptConnection(url: string): Promise<boolean> {
 
 // ─── Đọc Data System (Projects + Statuses + Roles) trực tiếp qua API ────────
 
+// ─── Hàm gọi Sheets API dùng chung ──────────────────────────────────────────
+async function fetchColumn(
+  spreadsheetId: string,
+  apiKey: string,
+  range: string,
+): Promise<string[]> {
+  const url = `${SHEETS_API}/${spreadsheetId}/values/${encodeURIComponent(range)}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = await res.json();
+  return (json.values ?? [] as unknown[][])
+    .map((r: unknown[]) => String(r[0] ?? '').trim())
+    .filter(Boolean);
+}
+
+// Cột A — Tên dự án
 export async function fetchDataSystemProjects(
   spreadsheetId: string,
   apiKey: string,
   sheetName = 'Data System',
 ): Promise<string[]> {
-  // Cột A = Tên dự án, Cột B = Thứ tự
-  const range = encodeURIComponent(`${sheetName}!A2:B`);
-  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const json = await res.json();
-  const rows: unknown[][] = json.values ?? [];
-  return rows
-    .filter(r => r[0] && String(r[0]).trim())
-    .sort((a, b) => (Number(a[1]) || 999) - (Number(b[1]) || 999))
-    .map(r => String(r[0]).trim());
+  return fetchColumn(spreadsheetId, apiKey, `${sheetName}!A2:A`);
 }
 
+// Cột I — Trạng thái
 export async function fetchDataSystemStatuses(
   spreadsheetId: string,
   apiKey: string,
   sheetName = 'Data System',
 ): Promise<string[]> {
-  // Cột H = STT, Cột I = Trạng thái
-  const range = encodeURIComponent(`${sheetName}!H2:I`);
-  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const json = await res.json();
-  const rows: unknown[][] = json.values ?? [];
-  return rows
-    .filter(r => r[1] && String(r[1]).trim() && String(r[1]).trim() !== 'Trạng thái')
-    .sort((a, b) => (Number(a[0]) || 999) - (Number(b[0]) || 999))
-    .map(r => String(r[1]).trim());
+  return fetchColumn(spreadsheetId, apiKey, `${sheetName}!I2:I`);
 }
 
+// Cột F — Vai trò (unique values)
 export async function fetchDataSystemRoles(
   spreadsheetId: string,
   apiKey: string,
   sheetName = 'Data System',
 ): Promise<string[]> {
-  // Cột F = Vai trò — lấy unique values
-  const range = encodeURIComponent(`${sheetName}!F2:F`);
-  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const json = await res.json();
-  const rows: unknown[][] = json.values ?? [];
-  const seen = new Set<string>();
-  const result: string[] = [];
-  rows.forEach(r => {
-    const v = String(r[0] ?? '').trim();
-    if (v && v !== 'Vai trò' && !seen.has(v)) { seen.add(v); result.push(v); }
-  });
-  return result;
+  const all = await fetchColumn(spreadsheetId, apiKey, `${sheetName}!F2:F`);
+  return [...new Set(all)]; // bỏ trùng
 }
 
 // LocalStorage helpers

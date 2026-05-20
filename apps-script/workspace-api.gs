@@ -104,59 +104,35 @@ function apiGetMyTasks(member) {
 }
 
 function apiGetProjects(masterDataSheet) {
-  const sheetName = masterDataSheet || 'Data System';
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) {
+  // Cột A = Tên dự án
+  const names = readColumn_(masterDataSheet || 'Data System', 1); // col A = index 1
+  if (!names.length) {
     // Fallback: lấy từ tất cả task
     const tasks = apiGetOverview();
-    const projects = [...new Set(tasks.map(function(t) { return t.project; }).filter(Boolean))];
-    return projects.map(function(p, i) { return { id: String(i), name: p }; });
+    const unique = [];
+    const seen = {};
+    tasks.forEach(function(t) {
+      if (t.project && !seen[t.project]) { seen[t.project] = true; unique.push(t.project); }
+    });
+    return unique.map(function(p, i) { return { id: String(i), name: p }; });
   }
-  const data = sheet.getDataRange().getValues();
-  return data.slice(1)
-    .filter(function(r) { return r[0] && String(r[0]).trim() !== ''; })
-    .map(function(r, i) { return { id: String(i), name: String(r[0]).trim() }; });
+  return names.map(function(name, i) { return { id: String(i), name: name }; });
 }
 
 function apiGetStatuses(masterDataSheet) {
-  const sheetName = masterDataSheet || 'Data System';
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return [
-    'Golive', 'Done', 'Nghiệm thu', 'Add Sprint', 'Add Xtask',
-    'Chờ Add Xtask', 'Chờ review mô tả', 'In progress',
-    'Chuẩn bị đưa vào làm', 'Định kỳ', 'Backlog', 'Pending', 'Cancelled', 'Follow',
-  ];
-  // Cột H = STT, Cột I = Trạng thái (row 2 trở đi)
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  const data = sheet.getRange(2, 8, lastRow - 1, 2).getValues(); // H:I
-  return data
-    .filter(function(r) {
-      const v = String(r[1] || '').trim();
-      return v && v !== 'Trạng thái';
-    })
-    .sort(function(a, b) { return (Number(a[0]) || 999) - (Number(b[0]) || 999); })
-    .map(function(r) { return String(r[1]).trim(); });
+  // Cột I = Trạng thái
+  return readColumn_(masterDataSheet || 'Data System', 9); // col I = index 9
 }
 
 function apiGetRoles(masterDataSheet) {
-  const sheetName = masterDataSheet || 'Data System';
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return ['PO', 'DA', 'PMC', 'PD'];
-  // Cột F = Vai trò (row 2 trở đi) — lấy unique values
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  const data = sheet.getRange(2, 6, lastRow - 1, 1).getValues(); // col F
+  // Cột F = Vai trò — unique values
+  const all = readColumn_(masterDataSheet || 'Data System', 6); // col F = index 6
   const seen = {};
-  const result = [];
-  data.forEach(function(r) {
-    const v = String(r[0] || '').trim();
-    if (v && v !== 'Vai trò' && !seen[v]) { seen[v] = true; result.push(v); }
+  return all.filter(function(v) {
+    if (seen[v]) return false;
+    seen[v] = true;
+    return true;
   });
-  return result.length ? result : ['PO', 'DA', 'PMC', 'PD'];
 }
 
 function apiGetMembers() {
@@ -441,6 +417,24 @@ function invalidateCache(owner) {
   const cache = CacheService.getScriptCache();
   cache.remove('overview');
   if (owner) cache.remove('tasks_' + owner);
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+/**
+ * Đọc 1 cột từ sheet, bỏ header (row 1), trả về mảng string không rỗng.
+ * colIndex: 1-indexed (A=1, B=2, F=6, I=9...)
+ */
+function readColumn_(sheetName, colIndex) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  return sheet.getRange(2, colIndex, lastRow - 1, 1)
+    .getValues()
+    .map(function(r) { return String(r[0] || '').trim(); })
+    .filter(Boolean);
 }
 
 function jsonOk(data) {
