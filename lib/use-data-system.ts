@@ -33,15 +33,16 @@ export function useDataSystem(): DataSystem {
 
     setLoading(true);
     const config = loadSheetsConfig();
+    const mdSheet = config?.masterDataSheet || 'Data System';
 
     async function load() {
       try {
         if (config?.appsScriptUrl) {
-          // Dùng Apps Script
+          // Dùng Apps Script — truyền masterDataSheet qua param
           const [p, s, r] = await Promise.all([
-            api.getProjects().then(list => list.map(x => x.name)),
-            api.getStatuses(),
-            api.getRoles(),
+            api.getProjects(mdSheet).then(list => list.map(x => x.name)),
+            api.getStatuses(mdSheet),
+            api.getRoles(mdSheet),
           ]);
           cache.projects = p;
           cache.statuses = s.length ? s : ALL_STATUSES;
@@ -49,9 +50,9 @@ export function useDataSystem(): DataSystem {
         } else if (config?.spreadsheetId && config?.apiKey) {
           // Dùng API Key trực tiếp
           const [p, s, r] = await Promise.all([
-            fetchDataSystemProjects(config.spreadsheetId, config.apiKey),
-            fetchDataSystemStatuses(config.spreadsheetId, config.apiKey),
-            fetchDataSystemRoles(config.spreadsheetId, config.apiKey),
+            fetchDataSystemProjects(config.spreadsheetId, config.apiKey, mdSheet),
+            fetchDataSystemStatuses(config.spreadsheetId, config.apiKey, mdSheet),
+            fetchDataSystemRoles(config.spreadsheetId, config.apiKey, mdSheet),
           ]);
           cache.projects = p;
           cache.statuses = s.length ? s : ALL_STATUSES;

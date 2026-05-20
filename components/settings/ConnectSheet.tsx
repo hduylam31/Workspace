@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { X, Link2, Loader2, CheckCircle, AlertCircle, ChevronDown, Trash2, Zap } from 'lucide-react';
+import { X, Link2, Loader2, CheckCircle, AlertCircle, ChevronDown, Trash2, Zap, Database } from 'lucide-react';
 import {
   fetchSheetNames,
   saveSheetsConfig,
@@ -18,17 +18,18 @@ interface Props {
 const PERSONAL_SHEETS = ['Đức Anh', 'Khánh', 'Tuyền', 'Trang', 'Trình', 'Mai'];
 
 export default function ConnectSheet({ onClose, onConnect }: Props) {
-  const [spreadsheetId, setSpreadsheetId] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [appsScriptUrl, setAppsScriptUrl] = useState('');
+  const [spreadsheetId, setSpreadsheetId]   = useState('');
+  const [apiKey, setApiKey]                 = useState('');
+  const [appsScriptUrl, setAppsScriptUrl]   = useState('');
+  const [masterDataSheet, setMasterDataSheet] = useState('');
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [selectedSheets, setSelectedSheets] = useState<string[]>([]);
-  const [step, setStep] = useState<'input' | 'select' | 'done'>('input');
-  const [loading, setLoading] = useState(false);
+  const [step, setStep]         = useState<'input' | 'select' | 'done'>('input');
+  const [loading, setLoading]   = useState(false);
   const [testingScript, setTestingScript] = useState(false);
   const [scriptOk, setScriptOk] = useState<boolean | null>(null);
-  const [error, setError] = useState('');
-  const [showApiHelp, setShowApiHelp] = useState(false);
+  const [error, setError]       = useState('');
+  const [showApiHelp, setShowApiHelp]       = useState(false);
   const [showScriptHelp, setShowScriptHelp] = useState(false);
 
   useEffect(() => {
@@ -37,6 +38,7 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
       setSpreadsheetId(saved.spreadsheetId);
       setApiKey(saved.apiKey);
       setAppsScriptUrl(saved.appsScriptUrl ?? '');
+      setMasterDataSheet(saved.masterDataSheet ?? '');
       setSelectedSheets(saved.selectedSheets);
       setStep('done');
     }
@@ -57,7 +59,6 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
   }
 
   function extractId(input: string): string {
-    // Accept full URL or just the ID
     const match = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
     return match ? match[1] : input.trim();
   }
@@ -69,17 +70,25 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
     try {
       const sheets = await fetchSheetNames(id, apiKey.trim());
       setAvailableSheets(sheets);
-      // Pre-select sheets matching known member names
       const preSelected = sheets.filter(s => PERSONAL_SHEETS.includes(s));
       setSelectedSheets(preSelected.length ? preSelected : sheets.slice(0, 3));
+      // Auto-detect sheet master data
+      const autoMaster = sheets.find(s =>
+        s.toLowerCase().includes('master') ||
+        s.toLowerCase().includes('data system') ||
+        s.toLowerCase() === 'data'
+      ) ?? '';
+      setMasterDataSheet(autoMaster);
       setSpreadsheetId(id);
       setStep('select');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(msg.includes('API key') ? 'API Key không hợp lệ hoặc chưa bật Sheets API.'
-        : msg.includes('404') ? 'Không tìm thấy Spreadsheet. Kiểm tra ID hoặc quyền truy cập.'
-        : msg.includes('403') ? 'Không có quyền truy cập. Đảm bảo sheet đã share "Anyone with link".'
-        : msg);
+      setError(
+        msg.includes('API key') ? 'API Key không hợp lệ hoặc chưa bật Sheets API.' :
+        msg.includes('404')     ? 'Không tìm thấy Spreadsheet. Kiểm tra ID hoặc quyền truy cập.' :
+        msg.includes('403')     ? 'Không có quyền truy cập. Đảm bảo sheet đã share "Anyone with link".' :
+        msg
+      );
     } finally {
       setLoading(false);
     }
@@ -91,6 +100,7 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
       apiKey: apiKey.trim(),
       selectedSheets,
       appsScriptUrl: appsScriptUrl.trim() || undefined,
+      masterDataSheet: masterDataSheet.trim() || undefined,
     };
     saveSheetsConfig(config);
     onConnect(config);
@@ -102,6 +112,7 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
     setSpreadsheetId('');
     setApiKey('');
     setAppsScriptUrl('');
+    setMasterDataSheet('');
     setScriptOk(null);
     setSelectedSheets([]);
     setAvailableSheets([]);
@@ -129,8 +140,11 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
         </div>
 
         <div className="p-5 space-y-5">
-          {step === 'done' ? (
+
+          {/* ── DONE ─────────────────────────────────────────── */}
+          {step === 'done' && (
             <div className="space-y-4">
+              {/* Connected */}
               <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-xl">
                 <CheckCircle size={20} className="text-green-600 shrink-0" />
                 <div>
@@ -138,26 +152,49 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                   <p className="text-xs text-green-600 mt-0.5 font-mono break-all">{spreadsheetId}</p>
                 </div>
               </div>
+
+              {/* Task sheets */}
               <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">Sheets đang đọc ({selectedSheets.length}):</p>
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Sheets đang đọc ({selectedSheets.length}):
+                </p>
                 <div className="flex flex-wrap gap-1.5">
                   {selectedSheets.map(s => (
                     <span key={s} className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">{s}</span>
                   ))}
                 </div>
               </div>
+
+              {/* Master Data sheet */}
+              <div className={`flex items-center gap-3 p-3 rounded-xl border text-sm ${
+                masterDataSheet
+                  ? 'bg-amber-50 border-amber-200 text-amber-800'
+                  : 'bg-gray-50 border-gray-200 text-gray-500'
+              }`}>
+                <Database size={16} className={masterDataSheet ? 'text-amber-600 shrink-0' : 'text-gray-400 shrink-0'} />
+                <div>
+                  <span className="font-medium">Sheet Master Data: </span>
+                  {masterDataSheet
+                    ? <span className="font-mono">{masterDataSheet}</span>
+                    : <span className="text-gray-400 italic">Chưa cấu hình — dùng &quot;Data System&quot;</span>
+                  }
+                </div>
+              </div>
+
+              {/* Apps Script */}
               <div className={`flex items-center gap-3 p-3 rounded-xl border text-sm ${
                 appsScriptUrl
                   ? 'bg-purple-50 border-purple-200 text-purple-800'
                   : 'bg-gray-50 border-gray-200 text-gray-500'
               }`}>
-                <Zap size={16} className={appsScriptUrl ? 'text-purple-600' : 'text-gray-400'} />
+                <Zap size={16} className={appsScriptUrl ? 'text-purple-600 shrink-0' : 'text-gray-400 shrink-0'} />
                 <span>
                   {appsScriptUrl
                     ? '✅ Apps Script URL đã cấu hình — Thêm/Sửa task sẽ lưu xuống Sheets'
                     : '⚠️ Chưa có Apps Script URL — Thêm/Sửa task chỉ lưu tạm trong trình duyệt'}
                 </span>
               </div>
+
               <div className="flex gap-3">
                 <button
                   onClick={() => setStep('input')}
@@ -174,36 +211,91 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                 </button>
               </div>
             </div>
-          ) : step === 'select' ? (
+          )}
+
+          {/* ── SELECT SHEETS ─────────────────────────────────── */}
+          {step === 'select' && (
             <div className="space-y-4">
-              <p className="text-sm text-gray-600">
-                Tìm thấy <strong>{availableSheets.length}</strong> sheets. Chọn các sheet cá nhân để đọc task:
-              </p>
-              <div className="border border-gray-200 rounded-xl overflow-hidden max-h-64 overflow-y-auto">
-                {availableSheets.map(sheet => {
-                  const isPersonal = PERSONAL_SHEETS.includes(sheet);
-                  return (
+              {/* Master Data sheet picker */}
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <Database size={15} className="text-amber-600" />
+                  <p className="text-sm font-semibold text-amber-800">Sheet Master Data</p>
+                </div>
+                <p className="text-xs text-amber-700">
+                  Sheet chứa danh sách <strong>Dự án</strong>, <strong>Trạng thái</strong> và <strong>Vai trò</strong> — dùng làm combobox khi thêm task.
+                </p>
+                <div className="grid grid-cols-1 gap-1.5 max-h-40 overflow-y-auto mt-1">
+                  {availableSheets.map(sheet => (
                     <label
                       key={sheet}
-                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0"
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer border transition-colors text-sm ${
+                        masterDataSheet === sheet
+                          ? 'bg-amber-100 border-amber-400 text-amber-900 font-medium'
+                          : 'bg-white border-gray-200 text-gray-700 hover:bg-amber-50 hover:border-amber-200'
+                      }`}
                     >
                       <input
-                        type="checkbox"
-                        checked={selectedSheets.includes(sheet)}
-                        onChange={() => toggleSheet(sheet)}
-                        className="rounded text-green-600 w-4 h-4"
+                        type="radio"
+                        name="masterDataSheet"
+                        value={sheet}
+                        checked={masterDataSheet === sheet}
+                        onChange={() => setMasterDataSheet(sheet)}
+                        className="accent-amber-500"
                       />
-                      <span className="text-sm text-gray-800 flex-1">{sheet}</span>
-                      {isPersonal && (
-                        <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">Member</span>
+                      <span className="truncate">{sheet}</span>
+                      {masterDataSheet === sheet && (
+                        <span className="ml-auto text-amber-600 text-xs shrink-0">✓ Đã chọn</span>
                       )}
                     </label>
-                  );
-                })}
+                  ))}
+                </div>
+                {masterDataSheet && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    → Đọc: cột A (Dự án) · cột F (Vai trò) · cột H–I (STT + Trạng thái)
+                  </p>
+                )}
               </div>
-              <p className="text-xs text-gray-400">
-                💡 Cột đọc: A=ID · B=Tên dự án · C=Task · D=Owner · E=Chi tiết · F=Link · G=Status · H=Bắt đầu · I=Kết thúc · J=Ghi chú
-              </p>
+
+              {/* Task sheets picker */}
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Sheets task cá nhân <span className="text-gray-400 font-normal">({availableSheets.length} sheets)</span>
+                </p>
+                <div className="border border-gray-200 rounded-xl overflow-hidden max-h-52 overflow-y-auto">
+                  {availableSheets.map(sheet => {
+                    const isPersonal = PERSONAL_SHEETS.includes(sheet);
+                    const isMaster   = sheet === masterDataSheet;
+                    return (
+                      <label
+                        key={sheet}
+                        className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer border-b border-gray-100 last:border-0 transition-colors ${
+                          isMaster ? 'bg-amber-50 opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedSheets.includes(sheet)}
+                          onChange={() => !isMaster && toggleSheet(sheet)}
+                          disabled={isMaster}
+                          className="rounded text-green-600 w-4 h-4"
+                        />
+                        <span className="text-sm text-gray-800 flex-1">{sheet}</span>
+                        {isMaster && (
+                          <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">Master Data</span>
+                        )}
+                        {isPersonal && !isMaster && (
+                          <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">Member</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  💡 Cột task: A=ID · B=Dự án · C=Task · D=Owner · E=Chi tiết · F=Link · G=Status · H=Bắt đầu · I=Kết thúc · J=Ghi chú · K=Vai trò
+                </p>
+              </div>
+
               <div className="flex gap-3">
                 <button
                   onClick={() => setStep('input')}
@@ -220,9 +312,11 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                 </button>
               </div>
             </div>
-          ) : (
+          )}
+
+          {/* ── INPUT ─────────────────────────────────────────── */}
+          {step === 'input' && (
             <div className="space-y-4">
-              {/* Hướng dẫn */}
               <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700 space-y-1">
                 <p className="font-medium">Yêu cầu trước khi kết nối:</p>
                 <p>1. Google Sheet đã được share → <strong>Anyone with the link can view</strong></p>
@@ -316,7 +410,7 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                   <div className="mt-2 p-3 bg-purple-50 border border-purple-100 rounded-xl text-xs text-purple-800 space-y-1.5">
                     <p className="font-medium">Deploy Apps Script Web App:</p>
                     <p>1. Mở file <strong>Workspace An Khang 2026</strong> → Extensions → Apps Script</p>
-                    <p>2. Dán nội dung file <code className="bg-purple-100 px-1 rounded">apps-script/workspace-api.gs</code> vào cuối editor</p>
+                    <p>2. Dán nội dung file <code className="bg-purple-100 px-1 rounded">apps-script/workspace-api.gs</code></p>
                     <p>3. Click <strong>Deploy → New deployment</strong></p>
                     <p>4. Type: <strong>Web app</strong> · Execute as: <strong>Me</strong> · Access: <strong>Anyone</strong></p>
                     <p>5. Deploy → copy URL → dán vào ô trên</p>
@@ -336,10 +430,14 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                 disabled={loading || !spreadsheetId.trim() || !apiKey.trim()}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
               >
-                {loading ? <><Loader2 size={16} className="animate-spin" /> Đang kết nối...</> : 'Kết nối & lấy danh sách sheets'}
+                {loading
+                  ? <><Loader2 size={16} className="animate-spin" /> Đang kết nối...</>
+                  : 'Kết nối & lấy danh sách sheets'
+                }
               </button>
             </div>
           )}
+
         </div>
       </div>
     </div>

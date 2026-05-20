@@ -45,9 +45,9 @@ function doGet(e) {
     switch (action) {
       case 'getOverview':  return jsonOk(apiGetOverview());
       case 'getMyTasks':   return jsonOk(apiGetMyTasks(p.member));
-      case 'getProjects':  return jsonOk(apiGetProjects());
-      case 'getStatuses':  return jsonOk(apiGetStatuses());
-      case 'getRoles':     return jsonOk(apiGetRoles());
+      case 'getProjects':  return jsonOk(apiGetProjects(p.masterDataSheet));
+      case 'getStatuses':  return jsonOk(apiGetStatuses(p.masterDataSheet));
+      case 'getRoles':     return jsonOk(apiGetRoles(p.masterDataSheet));
       case 'getMembers':   return jsonOk(apiGetMembers());
       case 'getDashboard': return jsonOk(apiGetDashboard());
       case 'ping':         return jsonOk({ status: 'ok', time: new Date().toISOString() });
@@ -103,9 +103,10 @@ function apiGetMyTasks(member) {
   return rows;
 }
 
-function apiGetProjects() {
+function apiGetProjects(masterDataSheet) {
+  const sheetName = masterDataSheet || 'Data System';
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Data System');
+  const sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
     // Fallback: lấy từ tất cả task
     const tasks = apiGetOverview();
@@ -118,9 +119,10 @@ function apiGetProjects() {
     .map(function(r, i) { return { id: String(i), name: String(r[0]).trim() }; });
 }
 
-function apiGetStatuses() {
+function apiGetStatuses(masterDataSheet) {
+  const sheetName = masterDataSheet || 'Data System';
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Data System');
+  const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return [
     'Golive', 'Done', 'Nghiệm thu', 'Add Sprint', 'Add Xtask',
     'Chờ Add Xtask', 'Chờ review mô tả', 'In progress',
@@ -139,9 +141,10 @@ function apiGetStatuses() {
     .map(function(r) { return String(r[1]).trim(); });
 }
 
-function apiGetRoles() {
+function apiGetRoles(masterDataSheet) {
+  const sheetName = masterDataSheet || 'Data System';
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Data System');
+  const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return ['PO', 'DA', 'PMC', 'PD'];
   // Cột F = Vai trò (row 2 trở đi) — lấy unique values
   const lastRow = sheet.getLastRow();

@@ -71,17 +71,17 @@ export const api = {
   getDashboard: (params?: { dateFrom?: string; dateTo?: string }) =>
     apiFetch<DashboardData>('getDashboard', params as Record<string, string>),
 
-  getProjects:  () =>
-    apiFetch<{ id: string; name: string }[]>('getProjects'),
+  getProjects:  (masterDataSheet?: string) =>
+    apiFetch<{ id: string; name: string }[]>('getProjects', masterDataSheet ? { masterDataSheet } : undefined),
 
   getMembers:   () =>
     apiFetch<{ id: string; name: string }[]>('getMembers'),
 
-  getStatuses: () =>
-    apiFetch<string[]>('getStatuses'),
+  getStatuses: (masterDataSheet?: string) =>
+    apiFetch<string[]>('getStatuses', masterDataSheet ? { masterDataSheet } : undefined),
 
-  getRoles: () =>
-    apiFetch<string[]>('getRoles'),
+  getRoles: (masterDataSheet?: string) =>
+    apiFetch<string[]>('getRoles', masterDataSheet ? { masterDataSheet } : undefined),
 
   updateTaskStatus: (id: string, status: string, note?: string) =>
     apiPost<{ updated: boolean }>('updateTaskStatus', { id, status, ...(note ? { note } : {}) }),

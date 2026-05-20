@@ -4,7 +4,8 @@ export interface SheetsConfig {
   spreadsheetId: string;
   apiKey: string;
   selectedSheets: string[];
-  appsScriptUrl?: string; // URL Web App để ghi dữ liệu
+  appsScriptUrl?: string;    // URL Web App để ghi dữ liệu
+  masterDataSheet?: string;  // Sheet chứa Master Data (Dự án, Trạng thái, Vai trò)
 }
 
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
@@ -136,9 +137,13 @@ export async function testAppsScriptConnection(url: string): Promise<boolean> {
 
 // ─── Đọc Data System (Projects + Statuses + Roles) trực tiếp qua API ────────
 
-export async function fetchDataSystemProjects(spreadsheetId: string, apiKey: string): Promise<string[]> {
+export async function fetchDataSystemProjects(
+  spreadsheetId: string,
+  apiKey: string,
+  sheetName = 'Data System',
+): Promise<string[]> {
   // Cột A = Tên dự án, Cột B = Thứ tự
-  const range = encodeURIComponent('Data System!A2:B');
+  const range = encodeURIComponent(`${sheetName}!A2:B`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url);
   if (!res.ok) return [];
@@ -150,9 +155,13 @@ export async function fetchDataSystemProjects(spreadsheetId: string, apiKey: str
     .map(r => String(r[0]).trim());
 }
 
-export async function fetchDataSystemStatuses(spreadsheetId: string, apiKey: string): Promise<string[]> {
+export async function fetchDataSystemStatuses(
+  spreadsheetId: string,
+  apiKey: string,
+  sheetName = 'Data System',
+): Promise<string[]> {
   // Cột H = STT, Cột I = Trạng thái
-  const range = encodeURIComponent('Data System!H2:I');
+  const range = encodeURIComponent(`${sheetName}!H2:I`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url);
   if (!res.ok) return [];
@@ -164,9 +173,13 @@ export async function fetchDataSystemStatuses(spreadsheetId: string, apiKey: str
     .map(r => String(r[1]).trim());
 }
 
-export async function fetchDataSystemRoles(spreadsheetId: string, apiKey: string): Promise<string[]> {
+export async function fetchDataSystemRoles(
+  spreadsheetId: string,
+  apiKey: string,
+  sheetName = 'Data System',
+): Promise<string[]> {
   // Cột F = Vai trò — lấy unique values
-  const range = encodeURIComponent('Data System!F2:F');
+  const range = encodeURIComponent(`${sheetName}!F2:F`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url);
   if (!res.ok) return [];
