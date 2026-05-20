@@ -4,6 +4,7 @@ import { X, CheckCircle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { loadSheetsConfig } from '@/lib/google-sheets';
 import { useDataSystem } from '@/lib/use-data-system';
+import Combobox from '@/components/Combobox';
 import type { TaskRow } from '@/lib/types';
 
 interface Props {
@@ -108,17 +109,15 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Dự án <span className="text-red-500">*</span>
             </label>
-            <input
-              list="projects-list"
+            <Combobox
               value={form.project}
-              onChange={e => set('project', e.target.value)}
-              placeholder={dsLoading ? 'Đang tải danh sách...' : 'Chọn hoặc nhập dự án...'}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-200"
+              onChange={v => set('project', v)}
+              options={projects}
+              placeholder="Chọn hoặc nhập dự án..."
+              allowFreeText={true}
+              loading={dsLoading}
               required
             />
-            <datalist id="projects-list">
-              {projects.map(p => <option key={p} value={p} />)}
-            </datalist>
           </div>
 
           {/* Tên Task */}
@@ -141,24 +140,25 @@ export default function TaskForm({ task, owner, onClose, onSave }: Props) {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Status <span className="text-red-500">*</span>
               </label>
-              <select
+              <Combobox
                 value={currentStatus}
-                onChange={e => set('status', e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-200"
-              >
-                {statuses.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+                onChange={v => set('status', v)}
+                options={statuses}
+                placeholder="Chọn trạng thái..."
+                allowFreeText={false}
+                loading={dsLoading}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Vai trò</label>
-              <select
+              <Combobox
                 value={form.role}
-                onChange={e => set('role', e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-200"
-              >
-                <option value="">— Chọn vai trò —</option>
-                {roles.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
+                onChange={v => set('role', v)}
+                options={roles}
+                placeholder="Chọn vai trò..."
+                allowFreeText={false}
+                loading={dsLoading}
+              />
             </div>
           </div>
 
