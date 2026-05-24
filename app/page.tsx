@@ -5,6 +5,8 @@ import OverviewModule from '@/components/overview/OverviewModule';
 import MyTasksModule from '@/components/my-tasks/MyTasksModule';
 import ITTrackerModule from '@/components/it-tracker/ITTrackerModule';
 import DashboardModule from '@/components/dashboard/DashboardModule';
+import PickTaskModule from '@/components/pick-task/PickTaskModule';
+import DailyReportModule from '@/components/daily-report/DailyReportModule';
 import ConnectSheet from '@/components/settings/ConnectSheet';
 import { SheetsProvider, useSheetsData } from '@/lib/sheets-context';
 import type { SheetsConfig } from '@/lib/google-sheets';
@@ -50,7 +52,9 @@ function AppContent() {
       <main className="flex-1 p-4 md:p-6 max-w-[1600px] mx-auto w-full">
         {activeTab === 'overview'   && <OverviewModule key={`ov-${refreshKey}`} />}
         {activeTab === 'my-tasks'   && <MyTasksModule key={`mt-${refreshKey}`} />}
-        {activeTab === 'it-tracker' && <ITTrackerModule key={`it-${refreshKey}`} />}
+        {activeTab === 'pick-task'    && <PickTaskModule key={`pt-${refreshKey}`} />}
+        {activeTab === 'daily-report' && <DailyReportModule key={`dr-${refreshKey}`} />}
+        {activeTab === 'it-tracker'   && <ITTrackerModule key={`it-${refreshKey}`} />}
         {activeTab === 'dashboard'  && <DashboardModule key={`db-${refreshKey}`} />}
       </main>
 

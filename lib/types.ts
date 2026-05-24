@@ -80,6 +80,24 @@ export interface DashboardData {
   roadmap: { quarter: string; done: number; total: number }[];
 }
 
+export type ReportStatus = 'on-track' | 'delayed' | 'need-support';
+export type ReportPeriod = 'day' | 'week' | 'month';
+
+export interface DailyReport {
+  id: string;
+  date: string;              // YYYY-MM-DD (luôn là ngày đầu kỳ: thứ Hai / ngày 1 tháng)
+  reportPeriod: ReportPeriod;
+  member: string;
+  role: string | null;       // Vai trò trong dự án: "PO", "DA, PMC", v.v.
+  project: string;
+  progress: number;          // 0-100
+  reportStatus: ReportStatus;
+  todayWork: string;         // "kỳ này đã làm gì"
+  tomorrowPlan: string;      // "kỳ tới sẽ làm gì"
+  blockers: string | null;
+  submittedAt: string;       // ISO timestamp
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   data: T;

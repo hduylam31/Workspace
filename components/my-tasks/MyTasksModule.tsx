@@ -1,13 +1,15 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
-import { Plus, ChevronDown, ChevronUp, ExternalLink, Edit2 } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Plus, ChevronDown, ChevronUp, ExternalLink, Edit2, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
-import { MEMBERS } from '@/lib/config';
+import { nameToMemberItem } from '@/lib/config';
+import { useMemberColors } from '@/lib/use-member-colors';
 import type { TaskRow } from '@/lib/types';
 import StatusBadge from '@/components/StatusBadge';
 import MemberAvatar from '@/components/MemberAvatar';
 import TaskForm from './TaskForm';
 import { useSheetsData } from '@/lib/sheets-context';
+import { useDataSystem } from '@/lib/use-data-system';
 
 function isOverdue(task: TaskRow) {
   if (!task.endDate) return false;
@@ -24,16 +26,26 @@ function isDueSoon(task: TaskRow) {
 const ACTIVE_STATUSES = ['Add Sprint', 'Add Xtask', 'In progress', 'Đang dev', 'Nghiệm thu', 'Chuẩn bị làm'];
 
 export default function MyTasksModule() {
-  const { tasks: sheetsTasks, loading: sheetsLoading, config: sheetsConfig } = useSheetsData();
-  const [selectedMember, setSelectedMember] = useState(MEMBERS[0].name);
+  const { tasks: sheetsTasks, loading: sheetsLoading, config: sheetsConfig, refresh, lastFetch } = useSheetsData();
+  const { members } = useDataSystem();
+  const { getColor, setColor, resetColor, hasCustomColor } = useMemberColors();
+  const colorInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [selectedMember, setSelectedMember] = useState('');
   const [mockTasksByMember, setMockTasksByMember] = useState<Record<string, TaskRow[]>>({});
   const [mockLoading, setMockLoading] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskRow | null>(null);
 
+  // Chọn thành viên đầu tiên khi members load xong
   useEffect(() => {
-    if (sheetsConfig) return; // dùng sheets data
+    if (!selectedMember && members.length > 0) {
+      setSelectedMember(members[0].name);
+    }
+  }, [members, selectedMember]);
+
+  useEffect(() => {
+    if (sheetsConfig || !selectedMember) return;
     if (mockTasksByMember[selectedMember]) return;
     setMockLoading(true);
     api.getMyTasks(selectedMember).then(data => {
@@ -49,8 +61,8 @@ export default function MyTasksModule() {
 
   // Thành viên có trong sheets data
   const availableMembers = sheetsConfig
-    ? MEMBERS.filter(m => sheetsConfig.selectedSheets.includes(m.name) || sheetsTasks.some(t => t.owner === m.name))
-    : MEMBERS;
+    ? members.filter(m => sheetsConfig.selectedSheets.includes(m.name) || sheetsTasks.some(t => t.owner === m.name))
+    : members;
 
   const sorted = useMemo(() => {
     return [...tasks].sort((a, b) => {
@@ -85,19 +97,19 @@ export default function MyTasksModule() {
     } else {
       const newTask: TaskRow = {
         id: `${selectedMember.slice(0, 2).toUpperCase()}${Date.now()}`,
-        project: data.project ?? '',
-        task: data.task ?? '',
-        owner: selectedMember,
-        role: data.role ?? null,
-        status: (data.status as TaskRow['status']) ?? 'Chuẩn bị đưa vào làm',
+        project:   data.project   ?? '',
+        task:      data.task      ?? '',
+        owner:     selectedMember,
+        role:      data.role      ?? null,
+        status:    (data.status as TaskRow['status']) ?? 'Chuẩn bị đưa vào làm',
         startDate: data.startDate ?? null,
-        endDate: data.endDate ?? null,
-        detail: data.detail ?? null,
-        link: data.link ?? null,
-        note: data.note ?? null,
+        endDate:   data.endDate   ?? null,
+        detail:    data.detail    ?? null,
+        link:      data.link      ?? null,
+        note:      null,
         sourceSheet: selectedMember,
-        sourceRow: 0,
-        itTaskId: null,
+        sourceRow:   0,
+        itTaskId:    null,
         lastModified: new Date().toISOString(),
       };
       setMockTasksByMember(prev => ({
@@ -111,30 +123,56 @@ export default function MyTasksModule() {
     <div className="flex gap-4 h-full">
       {/* Member sidebar */}
       <aside className="w-48 shrink-0 space-y-1">
-        {(sheetsConfig ? availableMembers : MEMBERS).map(m => {
+        {availableMembers.map(m => {
           const count = sheetsConfig
             ? sheetsTasks.filter(t => (t.owner === m.name || t.sourceSheet === m.name) && ACTIVE_STATUSES.includes(t.status)).length
             : (mockTasksByMember[m.name]?.filter(t => ACTIVE_STATUSES.includes(t.status)).length ?? 0);
+          const currentColor = getColor(m.name, nameToMemberItem(m.name).color);
+          const isCustom     = hasCustomColor(m.name);
           return (
-            <button
-              key={m.id}
-              onClick={() => setSelectedMember(m.name)}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-colors text-left ${
-                selectedMember === m.name
-                  ? 'bg-green-50 border border-green-200'
-                  : 'hover:bg-gray-100 border border-transparent'
-              }`}
-            >
-              <MemberAvatar name={m.name} size="md" />
-              <div className="flex-1 min-w-0">
-                <p className={`text-sm font-medium truncate ${selectedMember === m.name ? 'text-green-800' : 'text-gray-700'}`}>
-                  {m.name}
-                </p>
-                {count > 0 && (
-                  <p className="text-xs text-gray-400">{count} active</p>
-                )}
-              </div>
-            </button>
+            <div key={m.id} className="relative">
+              {/* Hidden color input */}
+              <input
+                ref={el => { colorInputRefs.current[m.name] = el; }}
+                type="color"
+                value={currentColor}
+                className="sr-only"
+                onChange={e => setColor(m.name, e.target.value)}
+              />
+
+              <button
+                onClick={() => setSelectedMember(m.name)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-colors text-left ${
+                  selectedMember === m.name
+                    ? 'bg-green-50 border border-green-200'
+                    : 'hover:bg-gray-100 border border-transparent'
+                }`}
+              >
+                {/* Avatar + chấm màu luôn hiện */}
+                <div className="relative shrink-0">
+                  <MemberAvatar name={m.name} size="md" />
+                  {/* Chấm màu nhỏ ở góc dưới phải — click để đổi màu */}
+                  <button
+                    type="button"
+                    onClick={e => { e.stopPropagation(); colorInputRefs.current[m.name]?.click(); }}
+                    title={isCustom ? 'Đổi màu (double-click để reset)' : 'Đổi màu avatar'}
+                    onDoubleClick={e => { e.stopPropagation(); resetColor(m.name); }}
+                    className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm
+                               hover:scale-125 active:scale-110 transition-transform cursor-pointer"
+                    style={{ backgroundColor: currentColor }}
+                  />
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-medium truncate ${selectedMember === m.name ? 'text-green-800' : 'text-gray-700'}`}>
+                    {m.name}
+                  </p>
+                  {count > 0 && (
+                    <p className="text-xs text-gray-400">{count} active</p>
+                  )}
+                </div>
+              </button>
+            </div>
           );
         })}
       </aside>
@@ -144,15 +182,34 @@ export default function MyTasksModule() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="font-semibold text-gray-900 text-lg">{selectedMember}</h2>
-            <p className="text-sm text-gray-500">{activeCount} task đang active</p>
+            <p className="text-sm text-gray-500">
+              {activeCount} task đang active
+              {lastFetch && sheetsConfig && (
+                <span className="ml-2 text-gray-400 text-xs">
+                  · cập nhật {lastFetch.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </p>
           </div>
-          <button
-            onClick={() => { setEditingTask(null); setShowForm(true); }}
-            className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors"
-          >
-            <Plus size={16} />
-            Thêm Task
-          </button>
+          <div className="flex items-center gap-2">
+            {sheetsConfig && (
+              <button
+                onClick={() => refresh()}
+                disabled={sheetsLoading}
+                title="Tải lại dữ liệu từ sheet"
+                className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-green-600 hover:border-green-300 hover:bg-green-50 transition-colors disabled:opacity-40"
+              >
+                <RefreshCw size={15} className={sheetsLoading ? 'animate-spin' : ''} />
+              </button>
+            )}
+            <button
+              onClick={() => { setEditingTask(null); setShowForm(true); }}
+              className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 transition-colors"
+            >
+              <Plus size={16} />
+              Thêm Task
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -169,10 +226,12 @@ export default function MyTasksModule() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">ID</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-16">ID</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Dự án</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Task</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Vai trò</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Bắt đầu</th>
                     <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Kết thúc</th>
                     <th className="w-10" />
                   </tr>
@@ -204,7 +263,25 @@ export default function MyTasksModule() {
                             <p className="text-xs text-gray-500 mt-1 line-clamp-4 whitespace-pre-line">{task.detail}</p>
                           )}
                         </td>
+                        <td className="px-4 py-3">
+                          {task.role ? (
+                            <div className="flex flex-wrap gap-1">
+                              {task.role.split(',').map(r => r.trim()).filter(Boolean).map(r => (
+                                <span key={r} className="px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full text-[11px] font-medium whitespace-nowrap">
+                                  {r}
+                                </span>
+                              ))}
+                            </div>
+                          ) : <span className="text-gray-300 text-xs">—</span>}
+                        </td>
                         <td className="px-4 py-3"><StatusBadge status={task.status} /></td>
+                        <td className="px-4 py-3">
+                          {task.startDate ? (
+                            <span className="text-xs text-gray-500">
+                              {new Date(task.startDate).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+                            </span>
+                          ) : <span className="text-gray-300 text-xs">—</span>}
+                        </td>
                         <td className="px-4 py-3">
                           {task.endDate ? (
                             <span className={`text-xs ${overdue ? 'text-red-600 font-medium' : soon ? 'text-yellow-600 font-medium' : 'text-gray-500'}`}>
@@ -212,7 +289,7 @@ export default function MyTasksModule() {
                               {overdue && ' 🔴'}
                               {soon && !overdue && ' ⚠️'}
                             </span>
-                          ) : '—'}
+                          ) : <span className="text-gray-300 text-xs">—</span>}
                         </td>
                         <td className="px-2 py-3">
                           <div className="flex items-center gap-1">
@@ -243,6 +320,7 @@ export default function MyTasksModule() {
         <TaskForm
           task={editingTask}
           owner={selectedMember}
+          lockOwner
           onClose={() => { setShowForm(false); setEditingTask(null); }}
           onSave={handleSave}
         />

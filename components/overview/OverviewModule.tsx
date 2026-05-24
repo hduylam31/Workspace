@@ -1,343 +1,421 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
-import { Search, ChevronDown, ChevronUp, Edit2, X } from 'lucide-react';
-import { api } from '@/lib/api';
-import { ALL_STATUSES, MEMBERS, STATUS_COLORS } from '@/lib/config';
-import type { TaskRow } from '@/lib/types';
-import StatusBadge from '@/components/StatusBadge';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import {
+  TrendingUp, AlertCircle, Clock, FileText,
+  ChevronDown, Users, Calendar, RefreshCw,
+} from 'lucide-react';
+import { useDataSystem } from '@/lib/use-data-system';
+import { getReportsFromSheet } from '@/lib/api';
 import MemberAvatar from '@/components/MemberAvatar';
-import { useSheetsData } from '@/lib/sheets-context';
+import { coversToday } from '@/components/daily-report/DailyReportModule';
+import type { DailyReport, ReportStatus, ReportPeriod } from '@/lib/types';
 
-const ITEMS_PER_PAGE = 50;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function isOverdue(task: TaskRow) {
-  if (!task.endDate) return false;
-  const end = new Date(task.endDate);
-  const now = new Date();
-  return end < now && task.status !== 'Done' && task.status !== 'Golive' && task.status !== 'Go live';
+const STATUS_CFG: Record<ReportStatus, { label: string; bg: string; text: string; border: string; icon: React.ReactNode; dot: string }> = {
+  'on-track':     { label: 'Đúng tiến độ', bg: 'bg-green-50',  text: 'text-green-700',  border: 'border-green-200', icon: <TrendingUp size={12} />, dot: 'bg-green-500' },
+  'delayed':      { label: 'Có chậm trễ',  bg: 'bg-amber-50',  text: 'text-amber-700',  border: 'border-amber-200', icon: <Clock size={12} />,       dot: 'bg-amber-400' },
+  'need-support': { label: 'Cần hỗ trợ',   bg: 'bg-red-50',    text: 'text-red-700',    border: 'border-red-200',   icon: <AlertCircle size={12} />, dot: 'bg-red-500'   },
+};
+
+const PERIOD_LABEL: Record<ReportPeriod, string> = { day: 'Ngày', week: 'Tuần', month: 'Tháng' };
+const PERIOD_DONE_LABEL: Record<ReportPeriod, string> = { day: 'Đã làm hôm nay', week: 'Tuần này đã làm', month: 'Tháng này đã làm' };
+
+function getWeekRange(d = new Date()): [string, string] {
+  const day = d.getDay();
+  const mon = new Date(d); mon.setDate(d.getDate() - ((day + 6) % 7));
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  return [mon.toISOString().split('T')[0], sun.toISOString().split('T')[0]];
 }
 
-function isDueSoon(task: TaskRow) {
-  if (!task.endDate) return false;
-  const end = new Date(task.endDate);
-  const now = new Date();
-  const diff = (end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-  return diff >= 0 && diff <= 3;
+function getMonthRange(d = new Date()): [string, string] {
+  const y = d.getFullYear(), m = d.getMonth();
+  return [
+    new Date(y, m, 1).toISOString().split('T')[0],
+    new Date(y, m + 1, 0).toISOString().split('T')[0],
+  ];
 }
 
-export default function OverviewModule() {
-  const { tasks: sheetsTasks, loading: sheetsLoading, config: sheetsConfig, error: sheetsError } = useSheetsData();
-  const [mockTasks, setMockTasks] = useState<TaskRow[]>([]);
-  const [mockLoading, setMockLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [ownerFilter, setOwnerFilter] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
-  const [projectFilter, setProjectFilter] = useState<string[]>([]);
-  const [groupBy, setGroupBy] = useState<'project' | 'owner' | 'status'>('project');
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [page, setPage] = useState(1);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editStatus, setEditStatus] = useState('');
+function getISOWeek(dateStr: string): number {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay() || 7;
+  d.setDate(d.getDate() + 4 - day);
+  const yearStart = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
 
-  useEffect(() => {
-    api.getOverview().then(data => { setMockTasks(data); setMockLoading(false); });
-  }, []);
-
-  const tasks = sheetsConfig ? sheetsTasks : mockTasks;
-  const loading = sheetsConfig ? sheetsLoading : mockLoading;
-
-  const projects = useMemo(() => [...new Set(tasks.map(t => t.project))].sort(), [tasks]);
-
-  const filtered = useMemo(() => {
-    return tasks.filter(t => {
-      if (ownerFilter.length && !ownerFilter.includes(t.owner)) return false;
-      if (statusFilter.length && !statusFilter.includes(t.status)) return false;
-      if (projectFilter.length && !projectFilter.includes(t.project)) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        return t.task.toLowerCase().includes(q) || (t.detail || '').toLowerCase().includes(q);
-      }
-      return true;
-    });
-  }, [tasks, ownerFilter, statusFilter, projectFilter, search]);
-
-  const grouped = useMemo(() => {
-    const groups: Record<string, TaskRow[]> = {};
-    filtered.forEach(t => {
-      const key = groupBy === 'project' ? t.project : groupBy === 'owner' ? t.owner : t.status;
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(t);
-    });
-    return groups;
-  }, [filtered, groupBy]);
-
-  const allRows = useMemo(() => {
-    return Object.entries(grouped).flatMap(([, rows]) => rows);
-  }, [grouped]);
-
-  const paginated = allRows.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
-  const totalPages = Math.max(1, Math.ceil(allRows.length / ITEMS_PER_PAGE));
-
-  function toggleRow(id: string) {
-    setExpandedRows(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+function formatPeriodHeader(dateStr: string, period: ReportPeriod): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  if (period === 'day') {
+    return d.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
   }
-
-  async function saveStatus(task: TaskRow) {
-    await api.updateTaskStatus(task.id, editStatus);
-    setMockTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: editStatus as TaskRow['status'] } : t));
-    setEditingId(null);
+  if (period === 'week') {
+    const end = new Date(d); end.setDate(d.getDate() + 6);
+    const wk = getISOWeek(dateStr);
+    const from = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+    const to   = end.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+    return `Tuần ${wk} · ${from} – ${to}/${d.getFullYear()}`;
   }
+  return d.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
+}
 
-  function MultiSelect({ label, options, value, onChange }: {
-    label: string; options: string[]; value: string[]; onChange: (v: string[]) => void;
-  }) {
-    const [open, setOpen] = useState(false);
-    return (
-      <div className="relative">
-        <button
-          onClick={() => setOpen(!open)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors ${
-            value.length ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-          }`}
-        >
-          {label} {value.length ? `(${value.length})` : ''} <ChevronDown size={14} />
-        </button>
-        {open && (
-          <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-30 min-w-[160px] py-1">
-            {options.map(opt => (
-              <label key={opt} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
-                <input
-                  type="checkbox"
-                  checked={value.includes(opt)}
-                  onChange={e => {
-                    const next = e.target.checked ? [...value, opt] : value.filter(v => v !== opt);
-                    onChange(next);
-                  }}
-                  className="rounded text-green-600"
-                />
-                <span className="truncate">{opt}</span>
-              </label>
-            ))}
-            {value.length > 0 && (
-              <button onClick={() => onChange([])} className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 border-t border-gray-100 mt-1">
-                Xóa filter
-              </button>
-            )}
-          </div>
-        )}
+/** Báo cáo có thuộc kỳ hiện tại của tab không? */
+function coversCurrentPeriod(r: DailyReport, tab: ReportPeriod): boolean {
+  if (r.reportPeriod !== tab) return false;
+  const today = new Date().toISOString().split('T')[0];
+  if (tab === 'day') return r.date === today;
+  if (tab === 'week') {
+    const [wFrom, wTo] = getWeekRange();
+    // Chấp nhận cả báo cáo có date trong khoảng của tuần hiện tại
+    return r.date >= wFrom && r.date <= wTo;
+  }
+  // month
+  const [mFrom] = getMonthRange();
+  return r.date.slice(0, 7) === mFrom.slice(0, 7);
+}
+
+function StatusBadge({ status }: { status: ReportStatus }) {
+  const cfg = STATUS_CFG[status];
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.bg} ${cfg.text} ${cfg.border}`}>
+      {cfg.icon}{cfg.label}
+    </span>
+  );
+}
+
+function ProgressBar({ value }: { value: number }) {
+  const color = value >= 80 ? 'bg-green-500' : value >= 50 ? 'bg-blue-500' : 'bg-amber-400';
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${value}%` }} />
       </div>
-    );
-  }
-
-  if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="w-8 h-8 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+      <span className="text-xs font-semibold tabular-nums text-gray-500 w-7 text-right">{value}%</span>
     </div>
   );
+}
 
+// ─── Mini report card ─────────────────────────────────────────────────────────
+function MiniReportCard({ report }: { report: DailyReport }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <div className="space-y-4">
-      {/* Source indicator */}
-      {sheetsConfig && (
-        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${
-          sheetsError ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-100'
-        }`}>
-          <span>{sheetsError ? '⚠️' : '✅'}</span>
-          <span>
-            {sheetsError
-              ? `Lỗi khi đọc Google Sheets: ${sheetsError}`
-              : `Đang đọc từ Google Sheets · ${sheetsConfig.selectedSheets.join(', ')} · ${tasks.length} task`}
-          </span>
+    <div className={`rounded-xl border bg-white overflow-hidden ${
+      report.reportStatus === 'need-support' ? 'border-red-200' :
+      report.reportStatus === 'delayed' ? 'border-amber-200' : 'border-gray-200'
+    }`}>
+      <div className="px-4 py-3 flex items-start gap-3">
+        <MemberAvatar name={report.member} size="md" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-gray-900 text-sm">{report.member}</span>
+            {report.role && report.role.split(',').map(r => r.trim()).filter(Boolean).map(r => (
+              <span key={r} className="px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full text-[11px] font-semibold">{r}</span>
+            ))}
+            <span className="text-xs text-gray-400">·</span>
+            <span className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full truncate max-w-[180px]">
+              {report.project}
+            </span>
+            <StatusBadge status={report.reportStatus} />
+          </div>
+          <div className="mt-1.5">
+            <ProgressBar value={report.progress} />
+          </div>
         </div>
-      )}
-      {/* Filter bar */}
-      <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-          <Search size={16} className="text-gray-400 shrink-0" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Tìm kiếm task..."
-            className="flex-1 text-sm outline-none text-gray-700 placeholder-gray-400"
-          />
-          {search && (
-            <button onClick={() => setSearch('')}><X size={14} className="text-gray-400" /></button>
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors shrink-0"
+        >
+          <ChevronDown size={15} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+
+      {!expanded && (
+        <div className="px-4 pb-3">
+          <p className="text-xs text-gray-500 line-clamp-2">
+            <span className="font-medium text-gray-700">✅ </span>{report.todayWork}
+          </p>
+          {report.blockers && (
+            <p className="text-xs text-amber-700 mt-0.5 line-clamp-1">
+              <span className="font-medium">⚠️ </span>{report.blockers}
+            </p>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <MultiSelect label="Owner" options={MEMBERS.map(m => m.name)} value={ownerFilter} onChange={v => { setOwnerFilter(v); setPage(1); }} />
-          <MultiSelect label="Status" options={ALL_STATUSES} value={statusFilter} onChange={v => { setStatusFilter(v); setPage(1); }} />
-          <MultiSelect label="Dự án" options={projects} value={projectFilter} onChange={v => { setProjectFilter(v); setPage(1); }} />
+      )}
+
+      {expanded && (
+        <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+              ✅ {PERIOD_DONE_LABEL[report.reportPeriod ?? 'day']}
+            </p>
+            <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{report.todayWork}</p>
+          </div>
+          {report.tomorrowPlan && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">📋 Kế hoạch tiếp theo</p>
+              <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{report.tomorrowPlan}</p>
+            </div>
+          )}
+          {report.blockers && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">⚠️ Vướng mắc / Blockers</p>
+              <p className="text-sm text-amber-800 whitespace-pre-line leading-relaxed">{report.blockers}</p>
+            </div>
+          )}
+          {report.submittedAt && (
+            <p className="text-xs text-gray-400">
+              Gửi lúc {new Date(report.submittedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+            </p>
+          )}
         </div>
-        <div className="flex items-center gap-1 ml-auto text-xs text-gray-500">
-          <span>Nhóm:</span>
-          {(['project', 'owner', 'status'] as const).map(g => (
+      )}
+    </div>
+  );
+}
+
+// ─── Module chính ─────────────────────────────────────────────────────────────
+export default function OverviewModule() {
+  const { members } = useDataSystem();
+  const today = new Date().toISOString().split('T')[0];
+
+  const [reports, setReports]   = useState<DailyReport[]>([]);
+  const [loading, setLoading]   = useState(false);
+  const [tab, setTab]           = useState<ReportPeriod>('week'); // mặc định Tuần
+
+  const loadReports = useCallback(async () => {
+    setLoading(true);
+    try { setReports(await getReportsFromSheet()); }
+    catch { setReports([]); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { loadReports(); }, [loadReports]);
+
+  // Báo cáo thuộc tab hiện tại (kỳ đang chọn)
+  const periodReports = useMemo(
+    () => reports.filter(r => coversCurrentPeriod(r, tab)),
+    [reports, tab]
+  );
+
+  // Per-member: lấy báo cáo mới nhất trong kỳ
+  const memberReport = useMemo(() => {
+    const map: Record<string, DailyReport> = {};
+    periodReports.forEach(r => {
+      if (!map[r.member] || r.submittedAt > map[r.member].submittedAt) map[r.member] = r;
+    });
+    return map;
+  }, [periodReports]);
+
+  const reportedSet   = useMemo(() => new Set(Object.keys(memberReport)), [memberReport]);
+  const needSupport   = periodReports.filter(r => r.reportStatus === 'need-support').length;
+  const delayed       = periodReports.filter(r => r.reportStatus === 'delayed').length;
+  const onTrack       = periodReports.filter(r => r.reportStatus === 'on-track').length;
+  const notReported   = members.filter(m => !reportedSet.has(m.name));
+
+  // Timeline: nhóm theo period+date
+  const grouped = useMemo(() => {
+    const sorted = [...periodReports].sort((a, b) =>
+      b.date.localeCompare(a.date) || b.submittedAt.localeCompare(a.submittedAt)
+    );
+    const g: Record<string, DailyReport[]> = {};
+    sorted.forEach(r => {
+      const k = `${r.reportPeriod}::${r.date}`;
+      if (!g[k]) g[k] = [];
+      g[k].push(r);
+    });
+    return g;
+  }, [periodReports]);
+
+  // Label kỳ đang xem
+  const periodRangeLabel = useMemo(() => {
+    if (tab === 'day') return today;
+    if (tab === 'week') {
+      const [wFrom, wTo] = getWeekRange();
+      return `${wFrom} → ${wTo}`;
+    }
+    const [mFrom, mTo] = getMonthRange();
+    return `${mFrom} → ${mTo}`;
+  }, [tab, today]);
+
+  return (
+    <div className="space-y-5">
+
+      {/* ── 3 Tab: Ngày / Tuần / Tháng ── */}
+      <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-3">
+        <Calendar size={15} className="text-gray-400 shrink-0" />
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Xem theo kỳ:</span>
+        <div className="flex items-center gap-1.5">
+          {(['day', 'week', 'month'] as ReportPeriod[]).map(p => (
             <button
-              key={g}
-              onClick={() => setGroupBy(g)}
-              className={`px-2 py-1 rounded-md capitalize ${groupBy === g ? 'bg-green-100 text-green-700 font-medium' : 'hover:bg-gray-100'}`}
+              key={p}
+              onClick={() => setTab(p)}
+              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                tab === p
+                  ? 'bg-green-600 text-white shadow-sm'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
             >
-              {g === 'project' ? 'Dự án' : g === 'owner' ? 'Owner' : 'Status'}
+              {PERIOD_LABEL[p]}
             </button>
           ))}
         </div>
+        <span className="ml-auto text-xs text-gray-400">{periodRangeLabel}</span>
+        <button
+          onClick={loadReports}
+          disabled={loading}
+          title="Tải lại"
+          className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors disabled:opacity-40"
+        >
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+        </button>
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
-              <tr>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide w-10">#</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Dự án</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Task</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Owner</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Deadline</th>
-                <th className="w-8" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {Object.entries(grouped).map(([groupKey, groupTasks]) => {
-                const groupRows = groupTasks.filter(t =>
-                  paginated.some(p => p.id === t.id)
-                );
-                if (!groupRows.length) return null;
-                return groupRows.map((task, idx) => {
-                  const overdue = isOverdue(task);
-                  const soon = isDueSoon(task);
-                  const expanded = expandedRows.has(task.id);
-                  return (
-                    <>
-                      <tr
-                        key={task.id}
-                        className={`hover:bg-gray-50 transition-colors ${
-                          overdue ? 'bg-red-50' : soon ? 'bg-yellow-50' : ''
-                        }`}
-                      >
-                        <td className="px-4 py-3 text-gray-400 text-xs">
-                          {idx === 0 && groupBy === 'project' ? (
-                            <span className="font-medium text-gray-600">{(page - 1) * ITEMS_PER_PAGE + allRows.indexOf(task) + 1}</span>
-                          ) : (
-                            allRows.indexOf(task) + 1 + (page - 1) * ITEMS_PER_PAGE
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          {idx === 0 ? (
-                            <span className="font-medium text-gray-700 text-xs">{task.project}</span>
-                          ) : (
-                            <span className="text-gray-300 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 max-w-xs">
-                          <div className="flex items-start gap-1">
-                            <span className="text-gray-800">{task.task}</span>
-                            {task.detail && (
-                              <button onClick={() => toggleRow(task.id)} className="text-gray-400 hover:text-gray-600 ml-1 shrink-0 mt-0.5">
-                                {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                              </button>
-                            )}
-                          </div>
-                          {expanded && task.detail && (
-                            <p className="text-xs text-gray-500 mt-1 line-clamp-3">{task.detail}</p>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
-                            <MemberAvatar name={task.owner} />
-                            <span className="text-gray-700 text-xs hidden sm:block">{task.owner}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          {editingId === task.id ? (
-                            <div className="flex items-center gap-1">
-                              <select
-                                value={editStatus}
-                                onChange={e => setEditStatus(e.target.value)}
-                                className="text-xs border border-gray-200 rounded px-1 py-0.5 outline-none"
-                              >
-                                {ALL_STATUSES.map(s => (
-                                  <option key={s} value={s}>{STATUS_COLORS[s]?.label ?? s}</option>
-                                ))}
-                              </select>
-                              <button onClick={() => saveStatus(task)} className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded">✓</button>
-                              <button onClick={() => setEditingId(null)} className="text-xs text-gray-400 px-1">✕</button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1 group">
-                              <StatusBadge status={task.status} />
-                              <button
-                                onClick={() => { setEditingId(task.id); setEditStatus(task.status); }}
-                                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-opacity"
-                              >
-                                <Edit2 size={12} />
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          {task.endDate ? (
-                            <span className={`text-xs ${overdue ? 'text-red-600 font-medium' : soon ? 'text-yellow-600 font-medium' : 'text-gray-500'}`}>
-                              {new Date(task.endDate).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
-                              {overdue && ' 🔴'}
-                              {soon && !overdue && ' ⚠️'}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="px-2 py-3">
-                          {task.link && (
-                            <a href={task.link} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-600 text-xs">🔗</a>
-                          )}
-                        </td>
-                      </tr>
-                    </>
-                  );
-                });
-              })}
-            </tbody>
-          </table>
-          {filtered.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <p className="text-sm">Không có task nào phù hợp</p>
-            </div>
-          )}
+      {/* ── Stat cards ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {/* Đã báo cáo */}
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Đã báo cáo</span>
+            <Users size={15} className="text-green-500" />
+          </div>
+          <p className="text-2xl font-bold text-gray-900">
+            {reportedSet.size}<span className="text-base font-normal text-gray-400">/{members.length}</span>
+          </p>
+          <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-green-500 rounded-full transition-all"
+              style={{ width: `${members.length ? (reportedSet.size / members.length) * 100 : 0}%` }}
+            />
+          </div>
+          <p className="text-xs text-gray-400 mt-1">{PERIOD_LABEL[tab]} này</p>
         </div>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="border-t border-gray-200 px-4 py-3 flex items-center justify-between bg-gray-50">
-            <span className="text-xs text-gray-500">{filtered.length} task</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="px-2 py-1 text-xs border border-gray-200 rounded-md disabled:opacity-40 hover:bg-white transition-colors"
-              >←</button>
-              <span className="text-xs text-gray-600">Trang {page}/{totalPages}</span>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="px-2 py-1 text-xs border border-gray-200 rounded-md disabled:opacity-40 hover:bg-white transition-colors"
-              >→</button>
+        {/* Đúng tiến độ */}
+        <div className="bg-white rounded-xl border border-green-100 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Đúng tiến độ</span>
+            <TrendingUp size={15} className="text-green-500" />
+          </div>
+          <p className="text-2xl font-bold text-green-700">{onTrack}</p>
+          <p className="text-xs text-gray-400 mt-1">báo cáo {PERIOD_LABEL[tab].toLowerCase()}</p>
+        </div>
+
+        {/* Chậm tiến độ */}
+        <div className="bg-white rounded-xl border border-amber-100 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Chậm tiến độ</span>
+            <Clock size={15} className="text-amber-500" />
+          </div>
+          <p className="text-2xl font-bold text-amber-600">{delayed}</p>
+          <p className="text-xs text-gray-400 mt-1">báo cáo {PERIOD_LABEL[tab].toLowerCase()}</p>
+        </div>
+
+        {/* Cần hỗ trợ */}
+        <div className={`bg-white rounded-xl border p-4 ${needSupport > 0 ? 'border-red-200' : 'border-gray-200'}`}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cần hỗ trợ</span>
+            <AlertCircle size={15} className={needSupport > 0 ? 'text-red-500' : 'text-gray-300'} />
+          </div>
+          <p className={`text-2xl font-bold ${needSupport > 0 ? 'text-red-600' : 'text-gray-900'}`}>{needSupport}</p>
+          <p className="text-xs text-gray-400 mt-1">báo cáo {PERIOD_LABEL[tab].toLowerCase()}</p>
+        </div>
+      </div>
+
+      {/* ── Trạng thái thành viên ── */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+          <Users size={15} className="text-gray-400" />
+          <h3 className="text-sm font-semibold text-gray-700">Trạng thái {PERIOD_LABEL[tab].toLowerCase()} này</h3>
+          <span className="ml-auto text-xs text-gray-400">{periodRangeLabel}</span>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {loading ? (
+            <div className="flex items-center justify-center h-24">
+              <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
             </div>
+          ) : members.map(m => {
+            const mReport   = memberReport[m.name];
+            const hasReport = !!mReport;
+            return (
+              <div key={m.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+                <MemberAvatar name={m.name} size="md" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{m.name}</p>
+                  {mReport && (
+                    <p className="text-xs text-gray-500 truncate mt-0.5">{mReport.project}</p>
+                  )}
+                </div>
+                {hasReport && mReport ? (
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="w-24 hidden sm:block">
+                      <ProgressBar value={mReport.progress} />
+                    </div>
+                    <StatusBadge status={mReport.reportStatus} />
+                  </div>
+                ) : (
+                  <span className="text-xs text-gray-400 shrink-0 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 inline-block" />
+                    Chưa báo cáo
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {!loading && notReported.length > 0 && (
+          <div className="px-4 py-2.5 bg-amber-50 border-t border-amber-100 flex items-center gap-2">
+            <span className="text-xs text-amber-700">
+              ⚠️ Chưa báo cáo {PERIOD_LABEL[tab].toLowerCase()}:&nbsp;
+              <strong>{notReported.map(m => m.name).join(', ')}</strong>
+            </span>
+          </div>
+        )}
+        {!loading && notReported.length === 0 && members.length > 0 && (
+          <div className="px-4 py-2.5 bg-green-50 border-t border-green-100">
+            <span className="text-xs text-green-700">✅ Tất cả thành viên đã báo cáo {PERIOD_LABEL[tab].toLowerCase()} này!</span>
           </div>
         )}
       </div>
 
-      {/* Summary */}
-      <div className="flex gap-3 flex-wrap text-xs text-gray-500">
-        <span>{filtered.length} task hiển thị</span>
-        {ownerFilter.length > 0 && <span>• Owner: {ownerFilter.join(', ')}</span>}
-        {statusFilter.length > 0 && <span>• Status: {statusFilter.length} đã chọn</span>}
-        {projectFilter.length > 0 && <span>• Dự án: {projectFilter.length} đã chọn</span>}
+      {/* ── Timeline báo cáo ── */}
+      <div className="space-y-6">
+        <div className="flex items-center gap-2">
+          <Calendar size={15} className="text-gray-400" />
+          <h3 className="text-sm font-semibold text-gray-700">Báo cáo {PERIOD_LABEL[tab].toLowerCase()} này</h3>
+          <span className="ml-auto text-xs text-gray-400">{periodReports.length} báo cáo</span>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center h-32">
+            <div className="w-8 h-8 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : Object.keys(grouped).length === 0 ? (
+          <div className="text-center py-16 text-gray-400 bg-white rounded-xl border border-gray-200">
+            <FileText size={36} className="mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Chưa có báo cáo {PERIOD_LABEL[tab].toLowerCase()} nào</p>
+          </div>
+        ) : (
+          Object.entries(grouped).map(([key, groupReports]) => {
+            const sample = groupReports[0];
+            return (
+              <div key={key}>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="px-3 py-1 rounded-full text-xs font-semibold bg-green-600 text-white whitespace-nowrap">
+                    {tab === 'day' ? '📅' : tab === 'week' ? '📆' : '🗓️'} {formatPeriodHeader(sample.date, sample.reportPeriod)}
+                  </div>
+                  <div className="flex-1 h-px bg-gray-200" />
+                  <span className="text-xs text-gray-400 whitespace-nowrap">{groupReports.length} báo cáo</span>
+                </div>
+                <div className="space-y-3">
+                  {groupReports.map(report => (
+                    <MiniReportCard key={report.id} report={report} />
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

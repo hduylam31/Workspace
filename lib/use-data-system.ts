@@ -6,19 +6,21 @@ import {
   fetchDataSystemProjects,
   fetchDataSystemStatuses,
   fetchDataSystemRoles,
+  fetchDataSystemMembers,
 } from './google-sheets';
-import { ALL_STATUSES, ALL_ROLES } from './config';
+import { ALL_STATUSES, ALL_ROLES, MEMBERS, nameToMemberItem, type MemberItem } from './config';
 
 interface DataSystem {
   projects: string[];
   statuses: string[];
   roles: string[];
+  members: MemberItem[];   // Thành viên từ Data System (fallback → MEMBERS config)
   loading: boolean;
 }
 
 // Cache module-level — tránh gọi lại khi re-render
-const cache: { projects: string[]; statuses: string[]; roles: string[]; ts: number } = {
-  projects: [], statuses: [], roles: [], ts: 0,
+const cache: { projects: string[]; statuses: string[]; roles: string[]; members: MemberItem[]; ts: number } = {
+  projects: [], statuses: [], roles: [], members: [], ts: 0,
 };
 const CACHE_TTL = 5 * 60 * 1000;
 
@@ -30,6 +32,7 @@ export function useDataSystem(): DataSystem {
   const [projects, setProjects] = useState<string[]>([]);
   const [statuses, setStatuses] = useState<string[]>(ALL_STATUSES);
   const [roles, setRoles]       = useState<string[]>(ALL_ROLES);
+  const [members, setMembers]   = useState<MemberItem[]>(MEMBERS);
   const [loading, setLoading]   = useState(false);
 
   useEffect(() => {
@@ -39,6 +42,7 @@ export function useDataSystem(): DataSystem {
       setProjects(cache.projects);
       setStatuses(cache.statuses);
       setRoles(cache.roles);
+      setMembers(cache.members);
       return;
     }
 
@@ -51,23 +55,29 @@ export function useDataSystem(): DataSystem {
       return;
     }
 
-    // Có API Key → đọc thẳng sheet Data System (không cần Apps Script)
-    // Master Data chỉ cần ĐỌC, không cần quyền ghi
+    // Có API Key → đọc thẳng sheet Data System
     setLoading(true);
 
     Promise.all([
       safe(fetchDataSystemProjects(config.spreadsheetId, config.apiKey, mdSheet), []),
       safe(fetchDataSystemStatuses(config.spreadsheetId, config.apiKey, mdSheet), []),
       safe(fetchDataSystemRoles(config.spreadsheetId, config.apiKey, mdSheet),    []),
-    ]).then(([p, s, r]) => {
-      cache.projects = p;
-      cache.statuses = s.length ? s : ALL_STATUSES;
-      cache.roles    = r.length ? r : ALL_ROLES;
+      safe(fetchDataSystemMembers(config.spreadsheetId, config.apiKey, mdSheet),  []),
+    ]).then(([p, s, r, m]) => {
+      const memberItems = (m as string[]).length
+        ? (m as string[]).map((name, i) => nameToMemberItem(name, i))
+        : MEMBERS;
+
+      cache.projects = p as string[];
+      cache.statuses = (s as string[]).length ? s as string[] : ALL_STATUSES;
+      cache.roles    = (r as string[]).length ? r as string[] : ALL_ROLES;
+      cache.members  = memberItems;
       cache.ts       = Date.now();
 
       setProjects(cache.projects);
       setStatuses(cache.statuses);
       setRoles(cache.roles);
+      setMembers(cache.members);
     }).catch(() => {
       // Giữ fallback đã set trong useState
     }).finally(() => {
@@ -75,5 +85,5 @@ export function useDataSystem(): DataSystem {
     });
   }, []);
 
-  return { projects, statuses, roles, loading };
+  return { projects, statuses, roles, members, loading };
 }

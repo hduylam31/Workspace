@@ -1,7 +1,7 @@
 'use client';
 import { RefreshCw, Wifi, WifiOff, Link2, CheckCircle2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { MEMBERS } from '@/lib/config';
+import { useDataSystem } from '@/lib/use-data-system';
 
 interface Props {
   activeTab: string;
@@ -14,13 +14,16 @@ interface Props {
 }
 
 const TABS = [
-  { id: 'overview',   label: 'Overview' },
-  { id: 'my-tasks',   label: 'My Tasks' },
-  { id: 'it-tracker', label: 'IT Tracker' },
-  { id: 'dashboard',  label: 'Dashboard' },
+  { id: 'overview',      label: 'Overview'   },
+  { id: 'dashboard',     label: 'Dashboard'  },
+  { id: 'pick-task',     label: 'Pick Task'  },
+  { id: 'my-tasks',      label: 'My Tasks'   },
+  { id: 'daily-report',  label: 'Báo cáo'   },
+  { id: 'it-tracker',    label: 'IT Tracker' },
 ];
 
 export default function Header({ activeTab, onTabChange, lastUpdated, onRefresh, loading, onOpenConnect, isConnected }: Props) {
+  const { members } = useDataSystem();
   const [online, setOnline] = useState(true);
 
   useEffect(() => {
@@ -90,7 +93,7 @@ export default function Header({ activeTab, onTabChange, lastUpdated, onRefresh,
             {online ? <Wifi size={14} className="text-green-500" /> : <WifiOff size={14} className="text-red-500" />}
           </div>
           <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-xs font-bold">
-            {MEMBERS[0].initial}
+            {members[0]?.initial ?? '?'}
           </div>
         </div>
       </div>

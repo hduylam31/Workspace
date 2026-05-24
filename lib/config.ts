@@ -32,13 +32,42 @@ export const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   'Low':    { bg: '#BBF7D0', text: '#16A34A' },
 };
 
-export const MEMBERS = [
-  { id: 'da', name: 'Đức Anh', initial: 'DA', color: '#4285F4', email: 'ducanh@mwg.com.vn' },
-  { id: 'kh', name: 'Khánh',   initial: 'KH', color: '#EA4335', email: 'khanh@mwg.com.vn' },
-  { id: 'ty', name: 'Tuyền',   initial: 'TY', color: '#34A853', email: 'tuyen@mwg.com.vn' },
-  { id: 'tr', name: 'Trang',   initial: 'TR', color: '#FBBC05', email: 'trang@mwg.com.vn' },
-  { id: 'ti', name: 'Trình',   initial: 'TI', color: '#9C27B0', email: 'trinh@mwg.com.vn' },
-  { id: 'ma', name: 'Mai',     initial: 'MA', color: '#FF6D00', email: 'mai@mwg.com.vn' },
+export interface MemberItem {
+  id: string;
+  name: string;
+  initial: string;
+  color: string;
+  email?: string;
+}
+
+const AVATAR_PALETTE = [
+  '#4285F4', '#EA4335', '#34A853', '#FBBC05',
+  '#9C27B0', '#FF6D00', '#00BCD4', '#795548',
+  '#607D8B', '#E91E63',
+];
+
+/** Tạo MemberItem từ tên — deterministic color từ hash tên */
+export function nameToMemberItem(name: string, index = 0): MemberItem {
+  const words = name.trim().split(/\s+/);
+  const initial = words.length >= 2
+    ? (words[0][0] + words[words.length - 1][0]).toUpperCase()
+    : name.slice(0, 2).toUpperCase();
+  // Màu cố định theo hash tên (không thay đổi khi thêm/bớt thành viên)
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  const color = AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+  const id = name.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\-]/g, '') || `m${index}`;
+  return { id, name, initial, color };
+}
+
+/** Fallback cứng — dùng khi chưa kết nối Google Sheets */
+export const MEMBERS: MemberItem[] = [
+  { id: 'da', name: 'Đức Anh', initial: 'DA', color: '#4285F4' },
+  { id: 'kh', name: 'Khánh',   initial: 'KH', color: '#EA4335' },
+  { id: 'ty', name: 'Tuyền',   initial: 'TY', color: '#34A853' },
+  { id: 'tr', name: 'Trang',   initial: 'TR', color: '#FBBC05' },
+  { id: 'ti', name: 'Trình',   initial: 'TI', color: '#9C27B0' },
+  { id: 'ma', name: 'Mai',     initial: 'MA', color: '#FF6D00' },
 ];
 
 export const ALL_STATUSES = [
