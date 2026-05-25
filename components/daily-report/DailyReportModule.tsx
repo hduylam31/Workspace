@@ -34,6 +34,30 @@ function inRange(date: string, from: string, to: string) {
   return date >= from && date <= to;
 }
 
+/**
+ * Kiểm tra báo cáo có giao nhau (overlap) với khoảng [from, to] không.
+ * - day:   chỉ kiểm tra r.date
+ * - week:  r.date → r.date + 6 ngày
+ * - month: r.date → cuối tháng đó
+ * Dùng thay cho inRange() để tránh miss báo cáo tuần/tháng bắt đầu trước kỳ hiện tại.
+ */
+function reportOverlapsRange(r: DailyReport, from: string, to: string): boolean {
+  if (r.reportPeriod === 'day') return r.date >= from && r.date <= to;
+
+  let coverEnd: string;
+  if (r.reportPeriod === 'week') {
+    const d = new Date(r.date + 'T00:00:00');
+    d.setDate(d.getDate() + 6);
+    coverEnd = d.toISOString().split('T')[0];
+  } else {
+    // month
+    const d = new Date(r.date + 'T00:00:00');
+    coverEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+  }
+  // Overlap: [r.date, coverEnd] ∩ [from, to] ≠ ∅
+  return r.date <= to && coverEnd >= from;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const STATUS_CFG: Record<ReportStatus, { label: string; bg: string; text: string; border: string; icon: React.ReactNode }> = {
   'on-track':     { label: 'Đúng tiến độ', bg: 'bg-green-50',  text: 'text-green-700',  border: 'border-green-200', icon: <TrendingUp size={12} /> },
@@ -308,7 +332,7 @@ export default function DailyReportModule() {
   const displayReports = useMemo(() => {
     return reports
       .filter(r => {
-        if (!inRange(r.date, dateFrom, dateTo)) return false;
+        if (!reportOverlapsRange(r, dateFrom, dateTo)) return false;
         if (viewMode === 'mine' && r.member !== selectedMember) return false;
         if (projectFilter && r.project !== projectFilter) return false;
         if (statusFilter  && r.reportStatus !== statusFilter) return false;
