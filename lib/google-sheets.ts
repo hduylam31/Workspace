@@ -353,14 +353,14 @@ export async function fetchAllITTrackerSheets(
 }
 
 // ─── Pool Task sheet ──────────────────────────────────────────────────────────
-// Cấu trúc KHÁC sheet cá nhân — không có cột Status:
-// A=ID  B=Tên dự án  C=Task  D=Owner  E=Vai trò  F=Chi tiết  G=Link  H=Bắt đầu  I=Kết thúc
+// Cấu trúc mới (format hình 1):
+// A=Tên dự án  B=Trạng thái  C=Loại dự án  D=Owner  E=Thành viên khác  F=Deadline
 export async function fetchPoolSheet(
   spreadsheetId: string,
   apiKey: string,
   sheetName: string,
 ): Promise<TaskRow[]> {
-  const range = encodeURIComponent(`${sheetName}!A:I`);
+  const range = encodeURIComponent(`${sheetName}!A:F`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -372,8 +372,8 @@ export async function fetchPoolSheet(
 
   const dataRows = rows.filter((row, idx) => {
     if (idx === 0) return false; // bỏ header
-    const id = String(row[0] ?? '').trim();
-    return id !== '' && id !== 'ID';
+    const name = String(row[0] ?? '').trim();
+    return name !== '' && name.toLowerCase() !== 'tên dự án';
   });
 
   return dataRows.map((row, idx) => {
@@ -382,19 +382,20 @@ export async function fetchPoolSheet(
         ? String(row[i]).trim()
         : null;
 
-    // 0=A ID  1=B Project  2=C Task  3=D Owner  4=E Role
-    // 5=F Detail  6=G Link  7=H Bắt đầu  8=I Kết thúc
+    // A(0)=Tên dự án  B(1)=Trạng thái  C(2)=Loại dự án
+    // D(3)=Owner  E(4)=Thành viên khác  F(5)=Deadline
+    const projectName = get(0) ?? '';
     return {
-      id:           get(0) ?? `${sheetName.slice(0, 2)}${idx + 2}`,
-      project:      get(1) ?? '',
-      task:         get(2) ?? '',
-      owner:        get(3) ?? '',          // giữ nguyên — rỗng = chưa pick, có tên = đã pick
-      role:         get(4),
-      detail:       get(5),
-      link:         get(6),
-      status:       'Chuẩn bị làm' as TaskRow['status'], // Pool không có cột Status
-      startDate:    parseSheetDate(row[7]), // H — Bắt đầu
-      endDate:      parseSheetDate(row[8]), // I — Kết thúc
+      id:           `pool_${idx + 2}`,       // row-based ID (không có cột ID)
+      project:      projectName,             // A — Tên dự án (tên chính)
+      task:         get(2) ?? 'Task',        // C — Loại dự án (Task / Subtask)
+      owner:        get(3) ?? '',            // D — Owner (rỗng = chưa assign)
+      role:         get(4),                  // E — Thành viên khác (CSV: "Tuyền, Trang")
+      detail:       null,
+      link:         null,
+      status:       (get(1) ?? 'In Progress') as TaskRow['status'], // B — Trạng thái dự án
+      startDate:    null,
+      endDate:      parseSheetDate(row[5]), // F — Deadline
       note:         null,
       sourceSheet:  sheetName,
       sourceRow:    idx + 2,
@@ -402,6 +403,15 @@ export async function fetchPoolSheet(
       lastModified: new Date().toISOString(),
     } satisfies TaskRow;
   });
+}
+
+// Cột J — Trạng thái dự án (Done, In Progress, Backlog, ...)
+export async function fetchDataSystemProjectStatuses(
+  spreadsheetId: string,
+  apiKey: string,
+  sheetName = 'Data System',
+): Promise<string[]> {
+  return fetchColumn(spreadsheetId, apiKey, `${sheetName}!J2:J`);
 }
 
 // ─── Report sheet (đọc) ───────────────────────────────────────────────────────
