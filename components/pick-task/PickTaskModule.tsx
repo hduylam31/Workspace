@@ -1,9 +1,9 @@
 'use client';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
-  Search, CheckSquare, Square, ChevronDown, X,
-  ClipboardList, UserCheck, Loader2, Plus, ArrowLeft,
-  List, CheckCircle2, AlertTriangle, Calendar,
+  Search, X, ChevronDown, ClipboardList, UserCheck,
+  Loader2, Plus, ArrowLeft, List, CheckCircle2,
+  AlertTriangle, Trash2, ChevronRight,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useDataSystem } from '@/lib/use-data-system';
@@ -12,233 +12,238 @@ import { useSheetsData } from '@/lib/sheets-context';
 import MemberAvatar from '@/components/MemberAvatar';
 import type { TaskRow } from '@/lib/types';
 
-type PickedMap   = Record<string, string>;   // taskId → ownerName
-type ViewFilter  = 'all' | 'available' | 'picked';
-type ConfirmState = 'idle' | 'confirm' | 'loading' | 'done' | 'error';
-
-// ─── Status badge cho Trạng thái dự án ───────────────────────────────────────
-const STATUS_COLOR: Record<string, { bg: string; text: string; border: string }> = {
-  'In Progress':  { bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-200'  },
-  'Done':         { bg: 'bg-green-50',  text: 'text-green-700',  border: 'border-green-200' },
-  'Backlog':      { bg: 'bg-gray-100',  text: 'text-gray-600',   border: 'border-gray-200'  },
-  'In progress':  { bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-200'  },
-};
-function getStatusStyle(status: string) {
-  return STATUS_COLOR[status] ?? { bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-gray-200' };
-}
-
-// ─── Loại dự án badge ─────────────────────────────────────────────────────────
-function TypeBadge({ type }: { type: string }) {
-  const isSubtask = type?.toLowerCase() === 'subtask';
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
-      isSubtask
-        ? 'bg-purple-50 text-purple-700 border-purple-200'
-        : 'bg-blue-50 text-blue-700 border-blue-100'
-    }`}>
-      {type || 'Task'}
-    </span>
-  );
-}
-
-// ─── Member chips (Thành viên khác) ──────────────────────────────────────────
-const CHIP_COLORS = [
-  'bg-orange-100 text-orange-700',
-  'bg-gray-200 text-gray-700',
-  'bg-green-100 text-green-700',
-  'bg-blue-100 text-blue-700',
-  'bg-pink-100 text-pink-700',
-  'bg-yellow-100 text-yellow-700',
+// ─── Role chips ────────────────────────────────────────────────────────────────
+const ROLE_COLORS = [
+  'bg-pink-100 text-pink-700 border-pink-200',
+  'bg-blue-100 text-blue-700 border-blue-100',
+  'bg-green-100 text-green-700 border-green-200',
+  'bg-purple-100 text-purple-700 border-purple-200',
+  'bg-orange-100 text-orange-700 border-orange-200',
+  'bg-yellow-100 text-yellow-700 border-yellow-200',
+  'bg-cyan-100 text-cyan-700 border-cyan-200',
 ];
-function MemberChip({ name, index }: { name: string; index: number }) {
-  const color = CHIP_COLORS[index % CHIP_COLORS.length];
+
+function RoleChip({ role, index }: { role: string; index: number }) {
+  const color = ROLE_COLORS[index % ROLE_COLORS.length];
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${color}`}>
-      {name}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${color}`}>
+      {role}
     </span>
   );
 }
 
-// ─── Form thêm task mới vào Pool ─────────────────────────────────────────────
-function AddPoolTaskForm({
+// Multi-select role toggle
+function RoleSelector({
+  selected,
+  options,
+  onChange,
+}: {
+  selected: string[];
+  options: string[];
+  onChange: (roles: string[]) => void;
+}) {
+  function toggle(r: string) {
+    onChange(selected.includes(r) ? selected.filter(x => x !== r) : [...selected, r]);
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((r, i) => {
+        const active = selected.includes(r);
+        return (
+          <button
+            key={r}
+            type="button"
+            onClick={() => toggle(r)}
+            className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+              active
+                ? `${ROLE_COLORS[i % ROLE_COLORS.length]} ring-2 ring-offset-1 ring-green-400`
+                : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300'
+            }`}
+          >
+            {r}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Kiểu dữ liệu một dòng giao việc ─────────────────────────────────────────
+interface MemberAssignment {
+  member: string;
+  roles:  string[];
+}
+
+// ─── Form giao task (Owner + nhiều thành viên, mỗi người có role riêng) ───────
+function AssignTaskForm({
   onClose,
   onSave,
 }: {
   onClose: () => void;
-  onSave: (data: Partial<TaskRow>) => void;
+  onSave: (projectId: string, projectName: string, assignments: MemberAssignment[]) => void;
 }) {
-  const { members, projectStatuses } = useDataSystem();
-  const [projectName,    setProjectName]    = useState('');
-  const [status,         setStatus]         = useState('In Progress');
-  const [loaiDuAn,       setLoaiDuAn]       = useState<'Task' | 'Subtask'>('Task');
-  const [owner,          setOwner]          = useState('');
-  const [otherMembers,   setOtherMembers]   = useState<string[]>([]);
-  const [deadline,       setDeadline]       = useState('');
+  const { members, roles } = useDataSystem();
 
-  function toggleOther(name: string) {
-    setOtherMembers(prev =>
-      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
-    );
+  const [projectId,   setProjectId]   = useState('');
+  const [projectName, setProjectName] = useState('');
+  const [assignments, setAssignments] = useState<MemberAssignment[]>([
+    { member: '', roles: [] },
+  ]);
+
+  function updateAssignment(idx: number, patch: Partial<MemberAssignment>) {
+    setAssignments(prev => prev.map((a, i) => i === idx ? { ...a, ...patch } : a));
+  }
+  function addMember() {
+    setAssignments(prev => [...prev, { member: '', roles: [] }]);
+  }
+  function removeMember(idx: number) {
+    setAssignments(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  // Tên người đã được chọn ở các vị trí khác → loại khỏi select
+  function availableMembers(idx: number) {
+    const picked = new Set(assignments.map((a, i) => i !== idx ? a.member : '').filter(Boolean));
+    return members.filter(m => !picked.has(m.name));
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!projectName.trim()) return;
-    onSave({
-      project:   projectName.trim(),
-      task:      loaiDuAn,
-      status:    status as TaskRow['status'],
-      owner:     owner,
-      role:      otherMembers.length > 0 ? otherMembers.join(', ') : null,
-      endDate:   deadline || null,
-    });
+    const valid = assignments.filter(a => a.member);
+    if (!projectName.trim() || valid.length === 0) return;
+    onSave(projectId.trim(), projectName.trim(), valid);
   }
 
-  const availableStatuses = projectStatuses.length
-    ? projectStatuses
-    : ['In Progress', 'Done', 'Backlog'];
+  const isValid = projectName.trim() && assignments.some(a => a.member);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-semibold text-gray-900">Thêm task vào Pool</h3>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+
+        {/* Header */}
+        <div className="sticky top-0 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between z-10">
+          <h3 className="font-semibold text-gray-900">Thêm / Giao Task</h3>
           <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400">
             <X size={16} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          {/* Tên dự án */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Tên dự án *</label>
-            <input
-              type="text"
-              value={projectName}
-              onChange={e => setProjectName(e.target.value)}
-              placeholder="Nhập tên dự án..."
-              autoFocus
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
-            />
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
+
+          {/* Project ID + Tên dự án */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">ID dự án</label>
+              <input
+                type="text"
+                value={projectId}
+                onChange={e => setProjectId(e.target.value)}
+                placeholder="DA001"
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100 font-mono"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Tên dự án *</label>
+              <input
+                type="text"
+                value={projectName}
+                onChange={e => setProjectName(e.target.value)}
+                placeholder="Nhập tên dự án..."
+                autoFocus
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
+              />
+            </div>
           </div>
 
-          {/* Trạng thái + Loại dự án (cùng hàng) */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Trạng thái</label>
-              <div className="relative">
-                <select
-                  value={status}
-                  onChange={e => setStatus(e.target.value)}
-                  className="w-full appearance-none pl-3 pr-7 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500"
-                >
-                  {availableStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <ChevronDown size={13} className="absolute right-2.5 top-3 text-gray-400 pointer-events-none" />
-              </div>
+          {/* Danh sách thành viên + vai trò */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                Thành viên &amp; Vai trò
+              </label>
+              <span className="text-xs text-gray-400">{assignments.length} người</span>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Loại dự án</label>
-              <div className="flex gap-2">
-                {(['Task', 'Subtask'] as const).map(t => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setLoaiDuAn(t)}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium border transition-colors ${
-                      loaiDuAn === t
-                        ? t === 'Subtask'
-                          ? 'bg-purple-600 text-white border-purple-600'
-                          : 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+
+            {assignments.map((a, idx) => (
+              <div key={idx} className={`border rounded-xl p-4 space-y-3 ${
+                idx === 0 ? 'border-green-200 bg-green-50/40' : 'border-gray-200 bg-gray-50/40'
+              }`}>
+                {/* Label + remove */}
+                <div className="flex items-center justify-between">
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    idx === 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {idx === 0 ? '👑 Owner' : `Thành viên ${idx + 1}`}
+                  </span>
+                  {idx > 0 && (
+                    <button type="button" onClick={() => removeMember(idx)}
+                      className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Member select */}
+                <div className="relative">
+                  <select
+                    value={a.member}
+                    onChange={e => updateAssignment(idx, { member: e.target.value })}
+                    className={`w-full appearance-none pl-3 pr-7 py-2.5 border rounded-xl text-sm outline-none transition-colors ${
+                      a.member
+                        ? 'border-green-400 bg-white text-gray-800'
+                        : 'border-gray-200 bg-white text-gray-500'
                     }`}
                   >
-                    {t}
-                  </button>
-                ))}
+                    <option value="">-- Chọn thành viên --</option>
+                    {availableMembers(idx).map(m => (
+                      <option key={m.name} value={m.name}>{m.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={13} className="absolute right-3 top-3 text-gray-400 pointer-events-none" />
+                </div>
+
+                {/* Role multi-select */}
+                {a.member && (
+                  <div>
+                    <p className="text-xs text-gray-500 mb-2">
+                      Vai trò
+                      {a.roles.length > 0 && (
+                        <span className="ml-1.5 text-green-600 font-semibold">
+                          ({a.roles.join(', ')})
+                        </span>
+                      )}
+                    </p>
+                    <RoleSelector
+                      selected={a.roles}
+                      options={roles}
+                      onChange={r => updateAssignment(idx, { roles: r })}
+                    />
+                  </div>
+                )}
               </div>
-            </div>
-          </div>
+            ))}
 
-          {/* Owner */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Owner</label>
-            <div className="relative">
-              <select
-                value={owner}
-                onChange={e => setOwner(e.target.value)}
-                className="w-full appearance-none pl-3 pr-7 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500"
-              >
-                <option value="">-- Chọn Owner --</option>
-                {members.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
-              </select>
-              <ChevronDown size={13} className="absolute right-2.5 top-3 text-gray-400 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* Thành viên khác (multi-select chips) */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              Thành viên khác
-              {otherMembers.length > 0 && (
-                <span className="ml-1.5 text-green-600">({otherMembers.length} đã chọn)</span>
-              )}
-            </label>
-            <div className="flex flex-wrap gap-2 p-3 border border-gray-200 rounded-xl bg-gray-50 min-h-[44px]">
-              {members
-                .filter(m => m.name !== owner)
-                .map((m, i) => {
-                  const selected = otherMembers.includes(m.name);
-                  return (
-                    <button
-                      key={m.name}
-                      type="button"
-                      onClick={() => toggleOther(m.name)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
-                        selected
-                          ? `${CHIP_COLORS[i % CHIP_COLORS.length]} border-transparent ring-2 ring-green-400`
-                          : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <MemberAvatar name={m.name} size="sm" />
-                      {m.name}
-                    </button>
-                  );
-                })}
-              {members.filter(m => m.name !== owner).length === 0 && (
-                <span className="text-xs text-gray-400">Chọn Owner trước để lọc thành viên</span>
-              )}
-            </div>
-          </div>
-
-          {/* Deadline */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              <Calendar size={12} className="inline mr-1" />Deadline
-            </label>
-            <input
-              type="date"
-              value={deadline}
-              onChange={e => setDeadline(e.target.value)}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500"
-            />
+            {/* Add member button */}
+            <button
+              type="button"
+              onClick={addMember}
+              disabled={assignments.length >= members.length}
+              className="w-full py-2.5 border border-dashed border-gray-300 rounded-xl text-sm text-gray-500
+                         hover:border-green-400 hover:text-green-600 hover:bg-green-50 transition-colors
+                         flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Plus size={14} />Thêm thành viên
+            </button>
           </div>
 
           {/* Actions */}
-          <div className="flex gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
-            >
+          <div className="flex gap-3 pt-1 border-t border-gray-100">
+            <button type="button" onClick={onClose}
+              className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">
               Hủy
             </button>
-            <button
-              type="submit"
-              disabled={!projectName.trim()}
-              className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
-            >
-              <Plus size={14} className="inline mr-1" />Thêm task
+            <button type="submit" disabled={!isValid}
+              className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors flex items-center justify-center gap-1.5">
+              <CheckCircle2 size={14} />Lưu giao việc
             </button>
           </div>
         </form>
@@ -249,10 +254,14 @@ function AddPoolTaskForm({
 
 // ─── Popup xác nhận Pick ──────────────────────────────────────────────────────
 function PickConfirmDialog({
-  tasks, member, state, errorMsg, onConfirm, onClose,
+  projectName, assignments, state, errorMsg, onConfirm, onClose,
 }: {
-  tasks: TaskRow[]; member: string; state: ConfirmState;
-  errorMsg: string; onConfirm: () => void; onClose: () => void;
+  projectName: string;
+  assignments: MemberAssignment[];
+  state: 'confirm' | 'loading' | 'done' | 'error';
+  errorMsg: string;
+  onConfirm: () => void;
+  onClose: () => void;
 }) {
   const isDone    = state === 'done';
   const isLoading = state === 'loading';
@@ -268,20 +277,15 @@ function PickConfirmDialog({
             isDone ? 'bg-green-100' : isError ? 'bg-red-100' : isLoading ? 'bg-blue-100' : 'bg-green-100'
           }`}>
             {isDone    ? <CheckCircle2 size={22} className="text-green-600" /> :
-             isError   ? <AlertTriangle size={22} className="text-red-500" />  :
+             isError   ? <AlertTriangle size={22} className="text-red-500" /> :
              isLoading ? <Loader2 size={22} className="text-blue-500 animate-spin" /> :
                          <UserCheck size={22} className="text-green-600" />}
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-gray-900 text-base">
-              {isDone ? 'Pick thành công!' : isError ? 'Có lỗi xảy ra' : isLoading ? 'Đang xử lý...' : 'Xác nhận Pick Task'}
+              {isDone ? 'Giao việc thành công!' : isError ? 'Có lỗi xảy ra' : isLoading ? 'Đang xử lý...' : 'Xác nhận giao việc'}
             </p>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {isDone    ? `Đã thêm vào My Tasks của ${member}` :
-               isError   ? errorMsg :
-               isLoading ? 'Đang ghi xuống sheet...' :
-                           `${tasks.length} task sẽ được giao cho ${member}`}
-            </p>
+            <p className="text-xs text-gray-500 mt-0.5 truncate">{projectName}</p>
           </div>
           {(isDone || isError) && (
             <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400">
@@ -290,47 +294,44 @@ function PickConfirmDialog({
           )}
         </div>
 
-        <div className="px-6 py-4 max-h-56 overflow-y-auto space-y-2">
-          {tasks.map(t => (
-            <div key={t.id} className={`flex items-start gap-3 p-3 rounded-xl border ${
+        <div className="px-6 py-4 space-y-2 max-h-56 overflow-y-auto">
+          {assignments.map((a, i) => (
+            <div key={a.member} className={`flex items-center gap-3 p-3 rounded-xl border ${
               isDone ? 'bg-green-50 border-green-100' : 'bg-gray-50 border-gray-100'
             }`}>
-              {isDone
-                ? <CheckCircle2 size={15} className="text-green-500 shrink-0 mt-0.5" />
-                : <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0 mt-1.5" />}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-gray-800 truncate">{t.project}</p>
-                <p className="text-xs text-gray-400">{t.task} · {t.status}</p>
+              <MemberAvatar name={a.member} size="sm" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 flex items-center gap-1.5">
+                  {i === 0 && <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold">Owner</span>}
+                  {a.member}
+                </p>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {a.roles.length > 0
+                    ? a.roles.map((r, ri) => <RoleChip key={r} role={r} index={ri} />)
+                    : <span className="text-xs text-gray-400">Chưa chọn vai trò</span>}
+                </div>
               </div>
+              {isDone && <CheckCircle2 size={15} className="text-green-500 shrink-0" />}
             </div>
           ))}
         </div>
 
-        {!isDone && !isError && (
-          <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 flex items-center gap-2">
-            <MemberAvatar name={member} size="sm" />
-            <span className="text-sm text-gray-600">
-              Owner: <span className="font-semibold text-gray-800">{member}</span>
-            </span>
-          </div>
-        )}
-
         {state === 'confirm' && (
           <div className="px-6 py-4 flex gap-3 border-t border-gray-100">
             <button onClick={onClose}
-              className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">
+              className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">
               Hủy
             </button>
             <button onClick={onConfirm}
-              className="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 flex items-center justify-center gap-2">
-              <UserCheck size={15} />Xác nhận Pick
+              className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 flex items-center justify-center gap-2">
+              <UserCheck size={15} />Xác nhận
             </button>
           </div>
         )}
         {state === 'done' && (
           <div className="px-6 py-4 border-t border-gray-100">
             <button onClick={onClose}
-              className="w-full px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 flex items-center justify-center gap-2">
+              className="w-full py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 flex items-center justify-center gap-2">
               <CheckCircle2 size={15} />Hoàn tất
             </button>
           </div>
@@ -345,19 +346,19 @@ function MemberPicker({ onSelect, onViewAll }: { onSelect: (name: string) => voi
   const { members } = useDataSystem();
   return (
     <div className="flex flex-col items-center py-10 space-y-6">
-      <div className="text-center space-y-1">
+      <div className="text-center">
         <div className="w-12 h-12 rounded-xl bg-green-600 flex items-center justify-center mx-auto mb-3">
           <ClipboardList size={24} className="text-white" />
         </div>
         <h2 className="text-lg font-semibold text-gray-900">Pick Task</h2>
-        <p className="text-sm text-gray-500">Chọn thành viên để bắt đầu nhận task</p>
+        <p className="text-sm text-gray-500">Chọn thành viên để xem task được giao</p>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full max-w-lg">
         {members.map(m => (
           <button key={m.id} onClick={() => onSelect(m.name)}
             className="flex flex-col items-center gap-2.5 p-5 bg-white rounded-2xl border border-gray-200
                        hover:border-green-400 hover:bg-green-50 hover:shadow-md transition-all group">
-            <span className="group-hover:scale-105 transition-transform inline-flex shadow-sm rounded-full">
+            <span className="group-hover:scale-105 transition-transform">
               <MemberAvatar name={m.name} size="lg" />
             </span>
             <span className="text-sm font-medium text-gray-700 group-hover:text-green-700">{m.name}</span>
@@ -367,141 +368,134 @@ function MemberPicker({ onSelect, onViewAll }: { onSelect: (name: string) => voi
       <button onClick={onViewAll}
         className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-gray-200 bg-white
                    text-sm text-gray-600 hover:border-green-400 hover:text-green-700 hover:bg-green-50 transition-all shadow-sm">
-        <List size={16} />Xem danh sách tất cả Task
+        <List size={16} />Xem tất cả dự án
       </button>
     </div>
   );
 }
 
-// ─── Bảng pool task ────────────────────────────────────────────────────────────
+// ─── Board chính ──────────────────────────────────────────────────────────────
 function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
   const [poolTasks,    setPoolTasks]    = useState<TaskRow[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [isFromSheet,  setIsFromSheet]  = useState(false);
-  const [pickedBy,     setPickedBy]     = useState<PickedMap>({});
-  const [selected,     setSelected]     = useState<Set<string>>(new Set());
   const [search,       setSearch]       = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [typeFilter,   setTypeFilter]   = useState('');
-  const [viewFilter,   setViewFilter]   = useState<ViewFilter>('all');
   const [activeMember, setActiveMember] = useState(member);
-  const [showAddForm,  setShowAddForm]  = useState(false);
-  const [confirmTasks, setConfirmTasks] = useState<TaskRow[]>([]);
-  const [confirmState, setConfirmState] = useState<ConfirmState>('idle');
+  const [showForm,     setShowForm]     = useState(false);
+
+  // Confirm pick state
+  const [confirmData,  setConfirmData]  = useState<{ projectId: string; projectName: string; assignments: MemberAssignment[] } | null>(null);
+  const [confirmState, setConfirmState] = useState<'confirm' | 'loading' | 'done' | 'error'>('confirm');
   const [confirmError, setConfirmError] = useState('');
 
   const config = typeof window !== 'undefined' ? loadSheetsConfig() : null;
   const { members } = useDataSystem();
   const { refresh: refreshSheets } = useSheetsData();
 
-  useEffect(() => {
-    api.getPoolTasks()
-      .then(data => {
-        setPoolTasks(data);
-        const initialPicked: PickedMap = {};
-        data.forEach(t => { if (t.owner) initialPicked[t.id] = t.owner; });
-        setPickedBy(initialPicked);
-        setIsFromSheet(!!config?.poolSheet && data.length > 0);
-      })
-      .catch(() => setPoolTasks([]))
-      .finally(() => setLoadingTasks(false));
+  const loadPool = useCallback(async () => {
+    setLoadingTasks(true);
+    try {
+      const data = await api.getPoolTasks();
+      setPoolTasks(data);
+      setIsFromSheet(!!config?.poolSheet && data.length > 0);
+    } catch {
+      setPoolTasks([]);
+    } finally {
+      setLoadingTasks(false);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Unique statuses và types từ dữ liệu thật
-  const allStatuses = useMemo(() => [...new Set(poolTasks.map(t => t.status).filter(Boolean))], [poolTasks]);
-  const allTypes    = useMemo(() => [...new Set(poolTasks.map(t => t.task).filter(Boolean))],   [poolTasks]);
+  useEffect(() => { loadPool(); }, [loadPool]);
 
-  const pickedCount    = Object.keys(pickedBy).length;
-  const availableCount = poolTasks.length - pickedCount;
+  // Nhóm các dòng theo ID dự án (itTaskId)
+  type ProjectGroup = {
+    projectId:   string;
+    projectName: string;
+    assignments: { member: string; roles: string[] }[];
+  };
 
-  const filtered = useMemo(() => poolTasks.filter(t => {
-    if (viewFilter === 'available' && pickedBy[t.id])  return false;
-    if (viewFilter === 'picked'    && !pickedBy[t.id]) return false;
-    if (statusFilter && t.status !== statusFilter)     return false;
-    if (typeFilter   && t.task   !== typeFilter)       return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return t.project.toLowerCase().includes(q) ||
-             (t.owner ?? '').toLowerCase().includes(q) ||
-             (t.role  ?? '').toLowerCase().includes(q);
-    }
-    return true;
-  }), [poolTasks, viewFilter, statusFilter, typeFilter, search, pickedBy]);
+  const projectGroups = useMemo((): ProjectGroup[] => {
+    const map = new Map<string, ProjectGroup>();
+    poolTasks.forEach(t => {
+      const key  = t.itTaskId ?? t.project;
+      const name = t.project;
+      if (!map.has(key)) map.set(key, { projectId: key, projectName: name, assignments: [] });
+      map.get(key)!.assignments.push({
+        member: t.owner,
+        roles:  t.role ? t.role.split(',').map(s => s.trim()).filter(Boolean) : [],
+      });
+    });
+    return Array.from(map.values());
+  }, [poolTasks]);
 
-  const selectableFiltered    = filtered.filter(t => !pickedBy[t.id]);
-  const allSelectableSelected = selectableFiltered.length > 0 && selectableFiltered.every(t => selected.has(t.id));
+  // Filter theo search + member
+  const filtered = useMemo(() => {
+    return projectGroups.filter(g => {
+      if (activeMember && !g.assignments.some(a => a.member === activeMember)) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        return g.projectName.toLowerCase().includes(q) ||
+               g.projectId.toLowerCase().includes(q) ||
+               g.assignments.some(a => a.member.toLowerCase().includes(q));
+      }
+      return true;
+    });
+  }, [projectGroups, activeMember, search]);
 
-  function toggleAll() {
-    if (allSelectableSelected) {
-      setSelected(prev => { const n = new Set(prev); selectableFiltered.forEach(t => n.delete(t.id)); return n; });
-    } else {
-      setSelected(prev => { const n = new Set(prev); selectableFiltered.forEach(t => n.add(t.id)); return n; });
-    }
+  // Expanded rows
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  function toggleExpand(id: string) {
+    setExpanded(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
   }
-  function toggle(id: string) {
-    if (pickedBy[id]) return;
-    setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  }
 
-  function handlePick() {
-    if (!activeMember || selected.size === 0) return;
-    setConfirmTasks(poolTasks.filter(t => selected.has(t.id)));
+  // Submit form → show confirm dialog
+  function handleFormSave(projectId: string, projectName: string, assignments: MemberAssignment[]) {
+    setConfirmData({ projectId, projectName, assignments });
     setConfirmState('confirm');
-    setConfirmError('');
+    setShowForm(false);
   }
 
-  async function executePickConfirmed() {
-    const cfg = loadSheetsConfig();
+  async function executeConfirmed() {
+    if (!confirmData) return;
     setConfirmState('loading');
-    const newPickedBy = { ...pickedBy };
-    confirmTasks.forEach(t => { newPickedBy[t.id] = activeMember; });
-    setPickedBy(newPickedBy);
-    setSelected(new Set());
 
-    if (!cfg?.appsScriptUrl) { setConfirmState('done'); return; }
+    const newRows: TaskRow[] = confirmData.assignments.map((a, i) => ({
+      id:           `POOL${Date.now()}_${i}`,
+      project:      confirmData.projectName,
+      task:         confirmData.projectName,
+      owner:        a.member,
+      role:         a.roles.join(', ') || null,
+      itTaskId:     confirmData.projectId || null,
+      detail:       null, link: null, note: null,
+      status:       'In Progress' as TaskRow['status'],
+      startDate:    null, endDate: null,
+      sourceSheet:  config?.poolSheet ?? 'Pool',
+      sourceRow:    poolTasks.length + 2,
+      lastModified: new Date().toISOString(),
+    }));
+
+    // Optimistic update
+    setPoolTasks(prev => [...prev, ...newRows]);
+
+    if (!config?.appsScriptUrl) { setConfirmState('done'); return; }
 
     try {
-      const results = await Promise.allSettled(
-        confirmTasks.map(t => api.pickPoolTask(t.id, activeMember, cfg?.poolSheet))
+      await Promise.all(
+        newRows.map(t =>
+          api.pickPoolTask(t.id, t.owner, config?.poolSheet)
+        )
       );
-      const failed = results.filter(r => r.status === 'rejected').length;
-      if (failed > 0) {
-        setConfirmError(`${failed}/${confirmTasks.length} task lỗi`);
-        setConfirmState('error');
-        return;
-      }
       await refreshSheets();
       setConfirmState('done');
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : 'Lỗi không xác định');
       setConfirmState('error');
     }
-  }
-
-  function closeConfirm() { setConfirmState('idle'); setConfirmTasks([]); setConfirmError(''); }
-
-  function handleAddTask(data: Partial<TaskRow>) {
-    const newTask: TaskRow = {
-      id:           `POOL${Date.now()}`,
-      project:      data.project  ?? '',
-      task:         data.task     ?? 'Task',
-      owner:        data.owner    ?? '',
-      role:         data.role     ?? null,
-      status:       data.status   ?? 'In Progress',
-      startDate:    null,
-      endDate:      data.endDate  ?? null,
-      detail:       null,
-      link:         null,
-      note:         null,
-      sourceSheet:  'Pool',
-      sourceRow:    poolTasks.length + 2,
-      itTaskId:     null,
-      lastModified: new Date().toISOString(),
-    };
-    setPoolTasks(prev => [newTask, ...prev]);
-    if (newTask.owner) setPickedBy(prev => ({ ...prev, [newTask.id]: newTask.owner }));
-    setShowAddForm(false);
   }
 
   if (loadingTasks) return (
@@ -519,7 +513,7 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
         <span>{isFromSheet ? '✅' : '📋'}</span>
         <span>
           {isFromSheet
-            ? <>Sheet <strong>{config?.poolSheet}</strong> · {poolTasks.length} task</>
+            ? <>Sheet <strong>{config?.poolSheet}</strong> · {projectGroups.length} dự án · {poolTasks.length} lượt giao</>
             : 'Mock data · Kết nối Google Sheets để dùng dữ liệu thật'}
         </span>
       </div>
@@ -539,20 +533,23 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
               </div>}
 
           <div>
-            <p className="font-semibold text-gray-900 text-sm">{activeMember || 'Tất cả Task Pool'}</p>
-            <p className="text-xs text-gray-400">{availableCount} chưa pick · {pickedCount} đã pick · {poolTasks.length} tổng</p>
+            <p className="font-semibold text-gray-900 text-sm">
+              {activeMember ? `Task của ${activeMember}` : 'Tất cả dự án'}
+            </p>
+            <p className="text-xs text-gray-400">{filtered.length} dự án</p>
           </div>
 
           {/* Selector khi xem tất cả */}
           {!member && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 shrink-0">Pick với tư cách:</span>
+              <span className="text-xs text-gray-500 shrink-0">Xem của:</span>
               <div className="relative">
-                <select value={activeMember} onChange={e => { setActiveMember(e.target.value); setSelected(new Set()); }}
+                <select value={activeMember}
+                  onChange={e => { setActiveMember(e.target.value); }}
                   className={`appearance-none pl-3 pr-7 py-1.5 rounded-lg border text-sm outline-none ${
                     activeMember ? 'border-green-500 bg-green-50 text-green-800 font-medium' : 'border-gray-200 text-gray-600'
                   }`}>
-                  <option value="">-- Chọn thành viên --</option>
+                  <option value="">Tất cả</option>
                   {members.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
                 </select>
                 <ChevronDown size={13} className="absolute right-2 top-2.5 text-gray-400 pointer-events-none" />
@@ -560,243 +557,158 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
             </div>
           )}
 
-          {/* View filter */}
-          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-            {([
-              { key: 'all',       label: 'Tất cả'    },
-              { key: 'available', label: 'Chưa pick' },
-              { key: 'picked',    label: 'Đã pick'   },
-            ] as { key: ViewFilter; label: string }[]).map(opt => (
-              <button key={opt.key} onClick={() => setViewFilter(opt.key)}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  viewFilter === opt.key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
-
-          <button onClick={() => setShowAddForm(true)}
+          <button onClick={() => setShowForm(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shadow-sm ml-auto">
-            <Plus size={15} />Thêm task
+            <Plus size={15} />Giao task mới
           </button>
         </div>
       </div>
 
-      {/* ── Filter bar ── */}
-      <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-2 flex-1 min-w-[140px]">
-          <Search size={15} className="text-gray-400 shrink-0" />
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Tìm tên dự án, owner..."
-            className="flex-1 text-sm outline-none text-gray-700 placeholder-gray-400" />
-          {search && <button onClick={() => setSearch('')}><X size={13} className="text-gray-400" /></button>}
-        </div>
-
-        {/* Filter Trạng thái */}
-        <div className="relative">
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-            className={`appearance-none pl-3 pr-7 py-1.5 rounded-lg border text-sm outline-none ${
-              statusFilter ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-600'
-            }`}>
-            <option value="">Tất cả trạng thái</option>
-            {allStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <ChevronDown size={13} className="absolute right-2 top-2.5 text-gray-400 pointer-events-none" />
-        </div>
-
-        {/* Filter Loại dự án */}
-        <div className="relative">
-          <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
-            className={`appearance-none pl-3 pr-7 py-1.5 rounded-lg border text-sm outline-none ${
-              typeFilter ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-600'
-            }`}>
-            <option value="">Tất cả loại</option>
-            {allTypes.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <ChevronDown size={13} className="absolute right-2 top-2.5 text-gray-400 pointer-events-none" />
-        </div>
-
-        {(statusFilter || typeFilter || search) && (
-          <button onClick={() => { setStatusFilter(''); setTypeFilter(''); setSearch(''); }}
-            className="text-xs text-red-500 hover:text-red-700">Xóa filter</button>
-        )}
-        <span className="ml-auto text-xs text-gray-400">
-          {filtered.length} task{selected.size > 0 ? ` · ${selected.size} đã chọn` : ''}
-        </span>
+      {/* ── Search ── */}
+      <div className="bg-white rounded-xl border border-gray-200 p-3 flex items-center gap-2">
+        <Search size={15} className="text-gray-400 shrink-0" />
+        <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Tìm tên dự án, ID, thành viên..."
+          className="flex-1 text-sm outline-none text-gray-700 placeholder-gray-400" />
+        {search && <button onClick={() => setSearch('')}><X size={13} className="text-gray-400" /></button>}
+        <span className="text-xs text-gray-400">{filtered.length} dự án</span>
       </div>
 
-      {/* ── Table ── */}
+      {/* ── Project list ── */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 w-10">
-                  {viewFilter !== 'picked' && (
-                    <button onClick={toggleAll} className="text-gray-400 hover:text-green-600 transition-colors">
-                      {allSelectableSelected
-                        ? <CheckSquare size={16} className="text-green-600" />
-                        : <Square size={16} />}
-                    </button>
-                  )}
-                </th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">ID</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tên dự án</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Trạng thái</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Loại</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Owner</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Thành viên khác</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Deadline</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.map(task => {
-                const isPicked   = !!pickedBy[task.id];
-                const isSelected = selected.has(task.id);
-                const otherNames = task.role
-                  ? task.role.split(',').map(s => s.trim()).filter(Boolean)
-                  : [];
+        {/* Table header */}
+        <div className="grid grid-cols-[2rem_6rem_1fr_auto] gap-0 bg-gray-50 border-b border-gray-200 px-4 py-2.5">
+          <div />
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</div>
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tên dự án</div>
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide pr-2">Thành viên</div>
+        </div>
 
-                return (
-                  <tr
-                    key={task.id}
-                    onClick={() => !isPicked && toggle(task.id)}
-                    className={`transition-colors ${
-                      isPicked   ? 'bg-gray-50 opacity-70' :
-                      isSelected ? 'bg-green-50 hover:bg-green-100 cursor-pointer' :
-                                   'hover:bg-gray-50 cursor-pointer'
-                    }`}
+        {filtered.length === 0 ? (
+          <div className="text-center py-14 text-gray-400">
+            <ClipboardList size={34} className="mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Chưa có dự án nào</p>
+            <button onClick={() => setShowForm(true)}
+              className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-gray-300 rounded-lg text-xs hover:border-green-400 hover:text-green-600 transition-colors">
+              <Plus size={13} />Thêm dự án mới
+            </button>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {filtered.map(g => {
+              const isOpen = expanded.has(g.projectId);
+              const myAssignment = g.assignments.find(a => a.member === activeMember);
+
+              return (
+                <div key={g.projectId}>
+                  {/* Project row */}
+                  <div
+                    className="grid grid-cols-[2rem_6rem_1fr_auto] gap-0 px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors items-center"
+                    onClick={() => toggleExpand(g.projectId)}
                   >
-                    {/* Checkbox */}
-                    <td className="px-4 py-3" onClick={e => { e.stopPropagation(); toggle(task.id); }}>
-                      {isPicked
-                        ? <span className="text-green-500 font-bold">✓</span>
-                        : isSelected
-                          ? <CheckSquare size={16} className="text-green-600" />
-                          : <Square size={16} className="text-gray-300" />}
-                    </td>
+                    {/* Expand arrow */}
+                    <div className="flex items-center">
+                      <ChevronRight size={15} className={`text-gray-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                    </div>
 
                     {/* ID */}
-                    <td className="px-4 py-3">
-                      <span className={`text-xs font-mono font-semibold ${isPicked ? 'text-gray-400' : 'text-gray-500'}`}>
-                        {task.id}
+                    <div>
+                      <span className="text-xs font-mono font-semibold text-gray-500">
+                        {g.projectId}
                       </span>
-                    </td>
+                    </div>
 
                     {/* Tên dự án */}
-                    <td className="px-4 py-3 max-w-[220px]">
-                      <p className={`font-medium text-sm truncate ${isPicked ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
-                        {task.project}
-                      </p>
-                    </td>
-
-                    {/* Trạng thái */}
-                    <td className="px-4 py-3">
-                      {(() => {
-                        const s = getStatusStyle(task.status);
-                        return (
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.bg} ${s.text} ${s.border}`}>
-                            {task.status}
-                          </span>
-                        );
-                      })()}
-                    </td>
-
-                    {/* Loại dự án */}
-                    <td className="px-4 py-3">
-                      <TypeBadge type={task.task} />
-                    </td>
-
-                    {/* Owner */}
-                    <td className="px-4 py-3">
-                      {task.owner ? (
-                        <div className="flex items-center gap-1.5">
-                          <MemberAvatar name={task.owner} size="sm" />
-                          <span className="text-xs font-medium text-gray-700">{task.owner}</span>
-                        </div>
-                      ) : (
-                        <span className="text-gray-300 text-xs">—</span>
-                      )}
-                    </td>
-
-                    {/* Thành viên khác */}
-                    <td className="px-4 py-3">
-                      {otherNames.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {otherNames.map((name, i) => (
-                            <MemberChip key={name} name={name} index={i} />
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{g.projectName}</p>
+                      {myAssignment && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {myAssignment.roles.map((r, i) => (
+                            <RoleChip key={r} role={r} index={i} />
                           ))}
+                          {myAssignment.roles.length === 0 && (
+                            <span className="text-xs text-gray-400">Chưa có vai trò</span>
+                          )}
                         </div>
-                      ) : (
-                        <span className="text-gray-300 text-xs">—</span>
                       )}
-                    </td>
+                    </div>
 
-                    {/* Deadline */}
-                    <td className="px-4 py-3">
-                      {task.endDate ? (
-                        <span className={`text-xs ${isPicked ? 'text-gray-400' : 'text-gray-600'}`}>
-                          {new Date(task.endDate + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
-                        </span>
-                      ) : <span className="text-gray-300 text-xs">—</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    {/* Avatar stack */}
+                    <div className="flex items-center pr-2">
+                      <div className="flex -space-x-2">
+                        {g.assignments.slice(0, 4).map((a, i) => (
+                          <div key={a.member} className="ring-2 ring-white rounded-full" style={{ zIndex: 10 - i }}>
+                            <MemberAvatar name={a.member} size="sm" />
+                          </div>
+                        ))}
+                        {g.assignments.length > 4 && (
+                          <div className="w-7 h-7 rounded-full bg-gray-100 ring-2 ring-white flex items-center justify-center">
+                            <span className="text-xs font-medium text-gray-500">+{g.assignments.length - 4}</span>
+                          </div>
+                        )}
+                      </div>
+                      <span className="ml-2 text-xs text-gray-400">{g.assignments.length}</span>
+                    </div>
+                  </div>
 
-          {filtered.length === 0 && (
-            <div className="text-center py-14 text-gray-400">
-              <ClipboardList size={34} className="mx-auto mb-3 opacity-30" />
-              <p className="text-sm">
-                {viewFilter === 'available' ? 'Tất cả task đã được assign!' :
-                 viewFilter === 'picked'    ? 'Chưa có task nào được assign' :
-                 'Không có task nào phù hợp'}
-              </p>
-              <button onClick={() => setShowAddForm(true)}
-                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-gray-300 rounded-lg text-xs hover:border-green-400 hover:text-green-600 transition-colors">
-                <Plus size={13} />Thêm task mới
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Footer / Pick button */}
-        <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 flex items-center justify-between gap-3">
-          <span className="text-xs text-gray-500">
-            {selected.size > 0
-              ? <span className="text-green-700 font-medium">{selected.size} task đã chọn</span>
-              : !activeMember
-                ? <span className="text-amber-600">Chọn thành viên ở trên để pick</span>
-                : 'Tick vào task muốn nhận'}
-          </span>
-          <button
-            onClick={handlePick}
-            disabled={!activeMember || selected.size === 0}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              !activeMember || selected.size === 0
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                : 'bg-green-600 text-white hover:bg-green-700 shadow-sm'
-            }`}>
-            <UserCheck size={15} />
-            Pick {selected.size > 0 ? `${selected.size} task` : 'task'}{activeMember ? ` cho ${activeMember}` : ''}
-          </button>
-        </div>
+                  {/* Expanded: member details */}
+                  {isOpen && (
+                    <div className="bg-gray-50 border-t border-gray-100 px-4 py-3">
+                      <div className="space-y-2 ml-8">
+                        {g.assignments.map((a, i) => (
+                          <div key={`${a.member}_${i}`}
+                            className={`flex items-center gap-3 px-3 py-2 rounded-xl border bg-white ${
+                              a.member === activeMember ? 'border-green-200' : 'border-gray-100'
+                            }`}>
+                            <MemberAvatar name={a.member} size="sm" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium text-gray-800">{a.member}</span>
+                                {i === 0 && (
+                                  <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold">
+                                    Owner
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {a.roles.length > 0
+                                  ? a.roles.map((r, ri) => <RoleChip key={r} role={r} index={ri} />)
+                                  : <span className="text-xs text-gray-400">Chưa có vai trò</span>}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {showAddForm && (
-        <AddPoolTaskForm onClose={() => setShowAddForm(false)} onSave={handleAddTask} />
-      )}
-
-      {confirmState !== 'idle' && (
-        <PickConfirmDialog
-          tasks={confirmTasks} member={activeMember}
-          state={confirmState} errorMsg={confirmError}
-          onConfirm={executePickConfirmed} onClose={closeConfirm}
+      {/* Form giao task */}
+      {showForm && (
+        <AssignTaskForm
+          onClose={() => setShowForm(false)}
+          onSave={handleFormSave}
         />
       )}
+
+      {/* Confirm dialog */}
+      {confirmData && confirmState !== 'confirm' || (confirmData && confirmState === 'confirm') ? (
+        confirmData ? (
+          <PickConfirmDialog
+            projectName={`${confirmData.projectId ? `[${confirmData.projectId}] ` : ''}${confirmData.projectName}`}
+            assignments={confirmData.assignments}
+            state={confirmState}
+            errorMsg={confirmError}
+            onConfirm={executeConfirmed}
+            onClose={() => { setConfirmData(null); setConfirmError(''); }}
+          />
+        ) : null
+      ) : null}
     </div>
   );
 }
