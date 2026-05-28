@@ -353,14 +353,14 @@ export async function fetchAllITTrackerSheets(
 }
 
 // ─── Pool Task sheet ──────────────────────────────────────────────────────────
-// Cấu trúc: MỖI DÒNG = 1 THÀNH VIÊN được giao vào 1 dự án
-// A=ID dự án  B=Tên dự án  C=Thành viên  D=Vai trò (CSV: "PO, PMC")
+// Cấu trúc mới:
+// A=ID  B=Tên dự án  C=Trạng thái  D=Loại dự án  E=Owner  F=Thành viên khác  G=Deadline
 export async function fetchPoolSheet(
   spreadsheetId: string,
   apiKey: string,
   sheetName: string,
 ): Promise<TaskRow[]> {
-  const range = encodeURIComponent(`${sheetName}!A:D`);
+  const range = encodeURIComponent(`${sheetName}!A:G`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -371,10 +371,9 @@ export async function fetchPoolSheet(
   const rows: unknown[][] = json.values ?? [];
 
   const dataRows = rows.filter((row, idx) => {
-    if (idx === 0) return false;
-    // Bỏ dòng trống và header
-    const hasContent = String(row[0] ?? '').trim() || String(row[2] ?? '').trim();
-    return !!hasContent;
+    if (idx === 0) return false; // bỏ header
+    const id = String(row[0] ?? '').trim();
+    return id !== '' && id.toLowerCase() !== 'id';
   });
 
   return dataRows.map((row, idx) => {
@@ -383,22 +382,23 @@ export async function fetchPoolSheet(
         ? String(row[i]).trim()
         : null;
 
-    // A(0)=ID dự án  B(1)=Tên dự án  C(2)=Thành viên  D(3)=Vai trò
+    // A(0)=ID  B(1)=Tên dự án  C(2)=Trạng thái  D(3)=Loại dự án
+    // E(4)=Owner  F(5)=Thành viên khác  G(6)=Deadline
     return {
-      id:           `pool_${idx + 2}`,   // unique row key
-      project:      get(1) ?? '',        // B — Tên dự án
-      task:         get(1) ?? '',        // task = tên dự án (dùng cho hiển thị)
-      owner:        get(2) ?? '',        // C — Thành viên (tên người được giao)
-      role:         get(3),              // D — Vai trò (CSV: "PO, PMC")
-      itTaskId:     get(0),              // A — ID dự án (DA001) → dùng để nhóm
+      id:           get(0) ?? `pool_${idx + 2}`, // A — ID (DA001, DA002, ...)
+      project:      get(1) ?? '',                // B — Tên dự án
+      task:         get(3) ?? 'Task',            // D — Loại dự án (Task / Subtask)
+      owner:        get(4) ?? '',                // E — Owner
+      role:         get(5),                      // F — Thành viên khác (CSV)
       detail:       null,
       link:         null,
-      status:       'In Progress' as TaskRow['status'],
+      status:       (get(2) ?? 'In Progress') as TaskRow['status'], // C — Trạng thái
       startDate:    null,
-      endDate:      null,
+      endDate:      parseSheetDate(row[6]),      // G — Deadline
       note:         null,
       sourceSheet:  sheetName,
       sourceRow:    idx + 2,
+      itTaskId:     null,
       lastModified: new Date().toISOString(),
     } satisfies TaskRow;
   });
