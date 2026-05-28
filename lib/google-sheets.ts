@@ -353,14 +353,14 @@ export async function fetchAllITTrackerSheets(
 }
 
 // ─── Pool Task sheet ──────────────────────────────────────────────────────────
-// Cấu trúc mới (format hình 1):
-// A=Tên dự án  B=Trạng thái  C=Loại dự án  D=Owner  E=Thành viên khác  F=Deadline
+// Cấu trúc mới:
+// A=ID  B=Tên dự án  C=Trạng thái  D=Loại dự án  E=Owner  F=Thành viên khác  G=Deadline
 export async function fetchPoolSheet(
   spreadsheetId: string,
   apiKey: string,
   sheetName: string,
 ): Promise<TaskRow[]> {
-  const range = encodeURIComponent(`${sheetName}!A:F`);
+  const range = encodeURIComponent(`${sheetName}!A:G`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -372,8 +372,8 @@ export async function fetchPoolSheet(
 
   const dataRows = rows.filter((row, idx) => {
     if (idx === 0) return false; // bỏ header
-    const name = String(row[0] ?? '').trim();
-    return name !== '' && name.toLowerCase() !== 'tên dự án';
+    const id = String(row[0] ?? '').trim();
+    return id !== '' && id.toLowerCase() !== 'id';
   });
 
   return dataRows.map((row, idx) => {
@@ -382,20 +382,19 @@ export async function fetchPoolSheet(
         ? String(row[i]).trim()
         : null;
 
-    // A(0)=Tên dự án  B(1)=Trạng thái  C(2)=Loại dự án
-    // D(3)=Owner  E(4)=Thành viên khác  F(5)=Deadline
-    const projectName = get(0) ?? '';
+    // A(0)=ID  B(1)=Tên dự án  C(2)=Trạng thái  D(3)=Loại dự án
+    // E(4)=Owner  F(5)=Thành viên khác  G(6)=Deadline
     return {
-      id:           `pool_${idx + 2}`,       // row-based ID (không có cột ID)
-      project:      projectName,             // A — Tên dự án (tên chính)
-      task:         get(2) ?? 'Task',        // C — Loại dự án (Task / Subtask)
-      owner:        get(3) ?? '',            // D — Owner (rỗng = chưa assign)
-      role:         get(4),                  // E — Thành viên khác (CSV: "Tuyền, Trang")
+      id:           get(0) ?? `pool_${idx + 2}`, // A — ID (DA001, DA002, ...)
+      project:      get(1) ?? '',                // B — Tên dự án
+      task:         get(3) ?? 'Task',            // D — Loại dự án (Task / Subtask)
+      owner:        get(4) ?? '',                // E — Owner
+      role:         get(5),                      // F — Thành viên khác (CSV)
       detail:       null,
       link:         null,
-      status:       (get(1) ?? 'In Progress') as TaskRow['status'], // B — Trạng thái dự án
+      status:       (get(2) ?? 'In Progress') as TaskRow['status'], // C — Trạng thái
       startDate:    null,
-      endDate:      parseSheetDate(row[5]), // F — Deadline
+      endDate:      parseSheetDate(row[6]),      // G — Deadline
       note:         null,
       sourceSheet:  sheetName,
       sourceRow:    idx + 2,

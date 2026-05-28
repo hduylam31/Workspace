@@ -641,6 +641,7 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
                     </button>
                   )}
                 </th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">ID</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tên dự án</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Trạng thái</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Loại</th>
@@ -674,6 +675,13 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
                         : isSelected
                           ? <CheckSquare size={16} className="text-green-600" />
                           : <Square size={16} className="text-gray-300" />}
+                    </td>
+
+                    {/* ID */}
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-mono font-semibold ${isPicked ? 'text-gray-400' : 'text-gray-500'}`}>
+                        {task.id}
+                      </span>
                     </td>
 
                     {/* Tên dự án */}
