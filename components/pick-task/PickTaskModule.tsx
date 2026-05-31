@@ -3,14 +3,14 @@ import { useState, useMemo, useEffect } from 'react';
 import {
   Search, CheckSquare, Square, ChevronDown, X,
   ClipboardList, UserCheck, Loader2, Plus, ArrowLeft,
-  List, CheckCircle2, AlertTriangle, Calendar,
+  List, CheckCircle2, AlertTriangle, Calendar, ExternalLink, Eye, Pencil, Save,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useDataSystem } from '@/lib/use-data-system';
 import { loadSheetsConfig } from '@/lib/google-sheets';
 import { useSheetsData } from '@/lib/sheets-context';
 import MemberAvatar from '@/components/MemberAvatar';
-import type { TaskRow } from '@/lib/types';
+import type { TaskRow, RoleTask } from '@/lib/types';
 
 type PickedMap   = Record<string, string>;   // taskId → ownerName
 type ViewFilter  = 'all' | 'available' | 'picked';
@@ -59,189 +59,817 @@ function MemberChip({ name, index }: { name: string; index: number }) {
   );
 }
 
-// ─── Form thêm task mới vào Pool ─────────────────────────────────────────────
-function AddPoolTaskForm({
-  onClose,
-  onSave,
-}: {
-  onClose: () => void;
-  onSave: (data: Partial<TaskRow>) => void;
-}) {
-  const { members, projectStatuses } = useDataSystem();
-  const [projectName,    setProjectName]    = useState('');
-  const [status,         setStatus]         = useState('In Progress');
-  const [loaiDuAn,       setLoaiDuAn]       = useState<'Task' | 'Subtask'>('Task');
-  const [owner,          setOwner]          = useState('');
-  const [otherMembers,   setOtherMembers]   = useState<string[]>([]);
-  const [deadline,       setDeadline]       = useState('');
+// ─── Role chip ───────────────────────────────────────────────────────────────
+const ROLE_CHIP_COLORS: Record<string, string> = {
+  'PO':  'bg-purple-100 text-purple-700 border-purple-200',
+  'DA':  'bg-blue-100 text-blue-700 border-blue-200',
+  'Dev': 'bg-green-100 text-green-700 border-green-200',
+  'QC':  'bg-yellow-100 text-yellow-700 border-yellow-200',
+  'PMC': 'bg-orange-100 text-orange-700 border-orange-200',
+  'PD':  'bg-pink-100 text-pink-700 border-pink-200',
+  'BA':  'bg-teal-100 text-teal-700 border-teal-200',
+};
+function RoleChip({ role }: { role: string }) {
+  const cls = ROLE_CHIP_COLORS[role] ?? 'bg-gray-100 text-gray-600 border-gray-200';
+  return <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold border ${cls}`}>{role}</span>;
+}
 
-  function toggleOther(name: string) {
-    setOtherMembers(prev =>
-      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
-    );
+// ─── Parse "Name[R1, R2]; Name2[R3]" or "Name[R1, R2|Task A; Task B]" ────────
+function parseMemberRoles(raw: string | null): { name: string; roles: string[]; tasks: string[] }[] {
+  if (!raw) return [];
+  if (raw.includes('[')) {
+    // Split by ]; to avoid breaking on ; inside task lists (tasks are separated by ; too)
+    const rawParts = raw.split(/\];\s*/);
+    const parts = rawParts.map((p, i) => i < rawParts.length - 1 ? p.trim() + ']' : p.trim());
+    return parts.map(t => {
+      const m = t.match(/^(.+)\[(.+)\]$/);
+      if (m) {
+        const inner = m[2];
+        const pipe = inner.indexOf('|');
+        if (pipe >= 0) return {
+          name: m[1].trim(),
+          roles: inner.slice(0, pipe).split(',').map(r => r.trim()).filter(Boolean),
+          tasks: inner.slice(pipe + 1).split(';').map(t2 => t2.trim()).filter(Boolean),
+        };
+        return { name: m[1].trim(), roles: inner.split(',').map(r => r.trim()).filter(Boolean), tasks: [] };
+      }
+      return { name: t.replace(/\]$/, '').trim(), roles: [], tasks: [] };
+    }).filter(m => m.name);
   }
+  return raw.split(',').map(s => ({ name: s.trim(), roles: [], tasks: [] })).filter(m => m.name);
+}
+function encodeMemberRoles(members: { name: string; roles: string[]; tasks?: string[] }[]): string {
+  return members.map(m => {
+    if (!m.roles.length) return m.name;
+    const inner = m.tasks?.length ? `${m.roles.join(', ')}|${m.tasks.join('; ')}` : m.roles.join(', ');
+    return `${m.name}[${inner}]`;
+  }).join('; ');
+}
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!projectName.trim()) return;
-    onSave({
-      project:   projectName.trim(),
-      task:      loaiDuAn,
-      status:    status as TaskRow['status'],
-      owner:     owner,
-      role:      otherMembers.length > 0 ? otherMembers.join(', ') : null,
-      endDate:   deadline || null,
+// ─── Parse / encode owner detail field (roles with optional tasks) ────────────
+function parseOwnerDetail(detail: string | null): { roles: string[]; tasks: string[] } {
+  if (!detail) return { roles: [], tasks: [] };
+  const pipe = detail.indexOf('|');
+  if (pipe >= 0) return {
+    roles: detail.slice(0, pipe).split(',').map(r => r.trim()).filter(Boolean),
+    tasks: detail.slice(pipe + 1).split(';').map(t => t.trim()).filter(Boolean),
+  };
+  return { roles: detail.split(',').map(r => r.trim()).filter(Boolean), tasks: [] };
+}
+function encodeOwnerDetail(roles: string[], tasks: string[]): string | null {
+  if (!roles.length) return null;
+  return tasks.length ? `${roles.join(', ')}|${tasks.join('; ')}` : roles.join(', ');
+}
+
+// ─── Role background colors ──────────────────────────────────────────────────
+const ROLE_BG: Record<string, string> = {
+  'PO':  'bg-green-100 text-green-800 border-green-300',
+  'PMC': 'bg-orange-100 text-orange-800 border-orange-300',
+  'PD':  'bg-blue-100 text-blue-800 border-blue-300',
+  'DA':  'bg-purple-100 text-purple-800 border-purple-300',
+};
+function getRoleBg(role: string) { return ROLE_BG[role] ?? 'bg-gray-100 text-gray-700 border-gray-200'; }
+
+// ─── Modal chọn đầu việc theo vai trò ────────────────────────────────────────
+function RoleTaskPickerModal({
+  filterRoles, initialSelected, onSave, onClose,
+}: {
+  filterRoles?: string[];
+  initialSelected?: string[];
+  onSave: (selected: string[]) => void;
+  onClose: () => void;
+}) {
+  const [roleTasks, setRoleTasks] = useState<RoleTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set(initialSelected ?? []));
+  const [roleFilter, setRoleFilter] = useState<string>('all');
+
+  useEffect(() => {
+    api.getRoleTasks()
+      .then(data => setRoleTasks(filterRoles?.length ? data.filter(t => filterRoles.includes(t.role)) : data))
+      .catch(() => setRoleTasks([]))
+      .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const allRoles = useMemo(() => [...new Set(roleTasks.map(t => t.role))], [roleTasks]);
+  const filtered = useMemo(
+    () => roleFilter === 'all' ? roleTasks : roleTasks.filter(t => t.role === roleFilter),
+    [roleTasks, roleFilter],
+  );
+  const grouped = useMemo(() => {
+    const g: Record<string, RoleTask[]> = {};
+    filtered.forEach(t => { if (!g[t.role]) g[t.role] = []; g[t.role].push(t); });
+    return g;
+  }, [filtered]);
+
+  function toggleTask(name: string) {
+    setSelected(prev => { const n = new Set(prev); n.has(name) ? n.delete(name) : n.add(name); return n; });
+  }
+  function toggleGroup(tasks: RoleTask[]) {
+    const all = tasks.every(t => selected.has(t.taskName));
+    setSelected(prev => {
+      const n = new Set(prev);
+      tasks.forEach(t => all ? n.delete(t.taskName) : n.add(t.taskName));
+      return n;
     });
   }
 
-  const availableStatuses = projectStatuses.length
-    ? projectStatuses
-    : ['In Progress', 'Done', 'Backlog'];
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col" style={{ maxHeight: 'calc(100vh - 32px)' }}>
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+          <div>
+            <h3 className="font-semibold text-gray-900">Chọn đầu việc theo vai trò</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Tick vào các đầu việc sẽ thực hiện</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400"><X size={16} /></button>
+        </div>
+        {/* Role filter tabs */}
+        <div className="px-6 pt-3 shrink-0">
+          <div className="flex gap-1.5 flex-wrap">
+            <button onClick={() => setRoleFilter('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${roleFilter === 'all' ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}`}>
+              Tất cả
+            </button>
+            {allRoles.map(role => (
+              <button key={role} onClick={() => setRoleFilter(role)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${roleFilter === role ? getRoleBg(role) : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'}`}>
+                {role}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Task list */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 min-h-0">
+          {loading
+            ? <div className="flex items-center justify-center h-32"><Loader2 size={24} className="text-green-500 animate-spin" /></div>
+            : Object.entries(grouped).map(([role, tasks]) => (
+              <div key={role}>
+                <div
+                  className={`flex items-center justify-between px-3 py-2 rounded-xl border cursor-pointer mb-2 ${getRoleBg(role)}`}
+                  onClick={() => toggleGroup(tasks)}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm">{role}</span>
+                    <span className="text-xs opacity-70">{tasks.length} đầu việc</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs">
+                    {tasks.every(t => selected.has(t.taskName))
+                      ? <><CheckSquare size={14} />Bỏ chọn tất cả</>
+                      : <><Square size={14} />Chọn tất cả</>}
+                  </div>
+                </div>
+                <div className="space-y-1 pl-2">
+                  {tasks.map(t => {
+                    const isSel = selected.has(t.taskName);
+                    return (
+                      <label key={t.taskName} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors ${isSel ? 'bg-green-50 border border-green-200' : 'hover:bg-gray-50 border border-transparent'}`}>
+                        <input type="checkbox" checked={isSel} onChange={() => toggleTask(t.taskName)} className="w-4 h-4 accent-green-600 shrink-0" />
+                        <span className="text-xs font-mono text-gray-400 w-5 shrink-0">{t.stt}.</span>
+                        <span className={`text-sm ${isSel ? 'text-green-800 font-medium' : 'text-gray-700'}`}>{t.taskName}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))
+          }
+        </div>
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex items-center gap-3">
+          <span className="text-sm text-gray-500 flex-1">
+            {selected.size > 0
+              ? <span className="text-green-700 font-semibold">{selected.size} đầu việc đã chọn</span>
+              : 'Chưa chọn đầu việc nào'}
+          </span>
+          <button onClick={onClose} className="px-4 py-2 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">Bỏ qua</button>
+          <button onClick={() => onSave([...selected])} className="px-5 py-2 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 flex items-center gap-1.5">
+            <CheckCircle2 size={14} />Lưu{selected.size > 0 ? ` (${selected.size})` : ''}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Form thêm task mới vào Pool ─────────────────────────────────────────────
+function AddPoolTaskForm({ onClose, onSave }: { onClose: () => void; onSave: (data: Partial<TaskRow>) => void }) {
+  const { members, roles: allRoles, projectStatuses } = useDataSystem();
+  const [projectName,  setProjectName]  = useState('');
+  const [status,       setStatus]       = useState('In Progress');
+  const [loaiDuAn,     setLoaiDuAn]     = useState<'Task' | 'Subtask'>('Task');
+  const [owner,        setOwner]        = useState('');
+  const [ownerRoles,   setOwnerRoles]   = useState<string[]>([]);
+  const [otherMembers, setOtherMembers] = useState<string[]>([]);
+  const [memberRoles,  setMemberRoles]  = useState<Record<string, string[]>>({});
+  const [deadline,     setDeadline]     = useState('');
+  const [link,         setLink]         = useState('');
+  const [noteText,     setNoteText]     = useState('');
+  const [ownerTasks,   setOwnerTasks]   = useState<string[]>([]);
+  const [memberTasks,  setMemberTasks]  = useState<Record<string, string[]>>({});
+  const [pickerTarget, setPickerTarget] = useState<'owner' | string | null>(null);
+  const [pickerRoles,  setPickerRoles]  = useState<string[]>([]);
+
+  const availableRoles = allRoles.length ? allRoles : ['PO', 'DA', 'Dev', 'QC', 'PMC', 'PD', 'BA'];
+
+  function toggleOther(name: string) {
+    setOtherMembers(prev => {
+      if (prev.includes(name)) {
+        setMemberRoles(r => { const n = { ...r }; delete n[name]; return n; });
+        setMemberTasks(t => { const n = { ...t }; delete n[name]; return n; });
+        return prev.filter(n => n !== name);
+      }
+      return [...prev, name];
+    });
+  }
+  function openPickerFor(target: 'owner' | string, roles: string[]) {
+    if (!roles.length) return;
+    setPickerTarget(target);
+    setPickerRoles(roles);
+  }
+  function handlePickerSave(tasks: string[]) {
+    if (pickerTarget === 'owner') setOwnerTasks(tasks);
+    else if (pickerTarget) setMemberTasks(prev => ({ ...prev, [pickerTarget]: tasks }));
+    setPickerTarget(null);
+  }
+  function toggleOwnerRole(role: string) {
+    setOwnerRoles(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]);
+  }
+  function toggleMemberRole(member: string, role: string) {
+    setMemberRoles(prev => {
+      const cur = prev[member] ?? [];
+      return { ...prev, [member]: cur.includes(role) ? cur.filter(r => r !== role) : [...cur, role] };
+    });
+  }
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!projectName.trim()) return;
+    const memberStr = otherMembers.length > 0
+      ? encodeMemberRoles(otherMembers.map(name => ({ name, roles: memberRoles[name] ?? [], tasks: memberTasks[name] ?? [] })))
+      : null;
+    onSave({
+      project: projectName.trim(), task: loaiDuAn,
+      status: status as TaskRow['status'], owner,
+      role: memberStr,
+      detail: encodeOwnerDetail(ownerRoles, ownerTasks),
+      endDate: deadline || null,
+      link: link.trim() || null,
+      note: noteText.trim() || null,
+    });
+  }
+  const availableStatuses = projectStatuses.length ? projectStatuses : ['In Progress', 'Done', 'Backlog'];
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md flex flex-col" style={{ maxHeight: 'calc(100vh - 32px)' }}>
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
           <h3 className="font-semibold text-gray-900">Thêm task vào Pool</h3>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400">
-            <X size={16} />
-          </button>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400"><X size={16} /></button>
         </div>
-
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          {/* Tên dự án */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Tên dự án *</label>
-            <input
-              type="text"
-              value={projectName}
-              onChange={e => setProjectName(e.target.value)}
-              placeholder="Nhập tên dự án..."
-              autoFocus
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
-            />
-          </div>
-
-          {/* Trạng thái + Loại dự án (cùng hàng) */}
-          <div className="grid grid-cols-2 gap-3">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
+            {/* Tên dự án */}
             <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Trạng thái</label>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Tên dự án *</label>
+              <input type="text" value={projectName} onChange={e => setProjectName(e.target.value)}
+                placeholder="Nhập tên dự án..." autoFocus
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100" />
+            </div>
+            {/* Trạng thái + Loại */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Trạng thái</label>
+                <div className="relative">
+                  <select value={status} onChange={e => setStatus(e.target.value)}
+                    className="w-full appearance-none pl-3 pr-7 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500">
+                    {availableStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <ChevronDown size={13} className="absolute right-2.5 top-3 text-gray-400 pointer-events-none" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Loại dự án</label>
+                <div className="flex gap-2">
+                  {(['Task', 'Subtask'] as const).map(t => (
+                    <button key={t} type="button" onClick={() => setLoaiDuAn(t)}
+                      className={`flex-1 py-2.5 rounded-xl text-sm font-medium border transition-colors ${
+                        loaiDuAn === t
+                          ? t === 'Subtask' ? 'bg-purple-600 text-white border-purple-600' : 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                      }`}>{t}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {/* Owner */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Owner</label>
               <div className="relative">
-                <select
-                  value={status}
-                  onChange={e => setStatus(e.target.value)}
-                  className="w-full appearance-none pl-3 pr-7 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500"
-                >
-                  {availableStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+                <select value={owner} onChange={e => { setOwner(e.target.value); setOwnerRoles([]); }}
+                  className="w-full appearance-none pl-3 pr-7 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500">
+                  <option value="">-- Chọn Owner --</option>
+                  {members.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
                 </select>
                 <ChevronDown size={13} className="absolute right-2.5 top-3 text-gray-400 pointer-events-none" />
               </div>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Loại dự án</label>
-              <div className="flex gap-2">
-                {(['Task', 'Subtask'] as const).map(t => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setLoaiDuAn(t)}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium border transition-colors ${
-                      loaiDuAn === t
-                        ? t === 'Subtask'
-                          ? 'bg-purple-600 text-white border-purple-600'
-                          : 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Owner */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Owner</label>
-            <div className="relative">
-              <select
-                value={owner}
-                onChange={e => setOwner(e.target.value)}
-                className="w-full appearance-none pl-3 pr-7 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500"
-              >
-                <option value="">-- Chọn Owner --</option>
-                {members.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
-              </select>
-              <ChevronDown size={13} className="absolute right-2.5 top-3 text-gray-400 pointer-events-none" />
-            </div>
-          </div>
-
-          {/* Thành viên khác (multi-select chips) */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              Thành viên khác
-              {otherMembers.length > 0 && (
-                <span className="ml-1.5 text-green-600">({otherMembers.length} đã chọn)</span>
+              {owner && (
+                <div className="mt-2">
+                  <p className="text-xs text-gray-400 mb-1.5">Vai trò của Owner{ownerRoles.length > 0 && <span className="ml-1 text-green-600 font-semibold">({ownerRoles.join(', ')})</span>}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {availableRoles.map(role => (
+                      <button key={role} type="button" onClick={() => toggleOwnerRole(role)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                          ownerRoles.includes(role) ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-200 hover:border-green-400'
+                        }`}>{role}</button>
+                    ))}
+                  </div>
+                  {ownerRoles.length > 0 && (
+                    <button type="button" onClick={() => openPickerFor('owner', ownerRoles)}
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-green-400 text-xs text-green-700 hover:bg-green-50 transition-colors">
+                      <ClipboardList size={13} />
+                      {ownerTasks.length > 0
+                        ? <><CheckCircle2 size={12} />{ownerTasks.length} đầu việc đã chọn — Sửa</>
+                        : 'Chọn đầu việc cho Owner'}
+                    </button>
+                  )}
+                </div>
               )}
-            </label>
-            <div className="flex flex-wrap gap-2 p-3 border border-gray-200 rounded-xl bg-gray-50 min-h-[44px]">
-              {members
-                .filter(m => m.name !== owner)
-                .map((m, i) => {
+            </div>
+            {/* Thành viên khác */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                Thành viên khác{otherMembers.length > 0 && <span className="ml-1.5 text-green-600">({otherMembers.length} đã chọn)</span>}
+              </label>
+              <div className="flex flex-wrap gap-2 p-3 border border-gray-200 rounded-xl bg-gray-50 min-h-[44px]">
+                {members.filter(m => m.name !== owner).map((m, i) => {
                   const selected = otherMembers.includes(m.name);
                   return (
-                    <button
-                      key={m.name}
-                      type="button"
-                      onClick={() => toggleOther(m.name)}
+                    <button key={m.name} type="button" onClick={() => toggleOther(m.name)}
                       className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
-                        selected
-                          ? `${CHIP_COLORS[i % CHIP_COLORS.length]} border-transparent ring-2 ring-green-400`
-                          : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <MemberAvatar name={m.name} size="sm" />
-                      {m.name}
+                        selected ? `${CHIP_COLORS[i % CHIP_COLORS.length]} border-transparent ring-2 ring-green-400` : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                      }`}>
+                      <MemberAvatar name={m.name} size="sm" />{m.name}
                     </button>
                   );
                 })}
-              {members.filter(m => m.name !== owner).length === 0 && (
-                <span className="text-xs text-gray-400">Chọn Owner trước để lọc thành viên</span>
+                {members.filter(m => m.name !== owner).length === 0 && (
+                  <span className="text-xs text-gray-400">Chọn Owner trước để lọc thành viên</span>
+                )}
+              </div>
+              {otherMembers.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs text-gray-400">Vai trò từng thành viên</p>
+                  {otherMembers.map(name => (
+                    <div key={name} className="p-2 bg-gray-50 rounded-xl border border-gray-100 space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <div className="flex items-center gap-1.5 min-w-[90px] shrink-0 mt-0.5">
+                          <MemberAvatar name={name} size="sm" />
+                          <span className="text-xs font-medium text-gray-700 truncate">{name}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {availableRoles.map(role => (
+                            <button key={role} type="button" onClick={() => toggleMemberRole(name, role)}
+                              className={`px-2 py-0.5 rounded-full text-xs font-semibold border transition-colors ${
+                                (memberRoles[name] ?? []).includes(role) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300'
+                              }`}>{role}</button>
+                          ))}
+                        </div>
+                      </div>
+                      {(memberRoles[name] ?? []).length > 0 && (
+                        <button type="button" onClick={() => openPickerFor(name, memberRoles[name] ?? [])}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-dashed border-blue-300 text-xs text-blue-700 hover:bg-blue-50 transition-colors">
+                          <ClipboardList size={12} />
+                          {(memberTasks[name] ?? []).length > 0
+                            ? <>{(memberTasks[name] ?? []).length} đầu việc — Sửa</>
+                            : 'Chọn đầu việc'}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
+            {/* Deadline */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5"><Calendar size={12} className="inline mr-1" />Deadline</label>
+              <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)}
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500" />
+            </div>
+            {/* Link */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5"><ExternalLink size={12} className="inline mr-1" />Link</label>
+              <input type="url" value={link} onChange={e => setLink(e.target.value)} placeholder="https://..."
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500" />
+            </div>
+            {/* Ghi chú */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Ghi chú</label>
+              <textarea value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Mô tả thêm về task..." rows={3}
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500 resize-none" />
+            </div>
           </div>
-
-          {/* Deadline */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              <Calendar size={12} className="inline mr-1" />Deadline
-            </label>
-            <input
-              type="date"
-              value={deadline}
-              onChange={e => setDeadline(e.target.value)}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500"
-            />
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
-            >
-              Hủy
-            </button>
-            <button
-              type="submit"
-              disabled={!projectName.trim()}
-              className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
-            >
+          <div className="flex gap-3 px-6 py-4 border-t border-gray-100 shrink-0">
+            <button type="button" onClick={onClose} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">Hủy</button>
+            <button type="submit" disabled={!projectName.trim()}
+              className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 transition-colors">
               <Plus size={14} className="inline mr-1" />Thêm task
             </button>
           </div>
         </form>
+      </div>
+      {pickerTarget !== null && (
+        <RoleTaskPickerModal
+          filterRoles={pickerRoles}
+          initialSelected={pickerTarget === 'owner' ? ownerTasks : (memberTasks[pickerTarget] ?? [])}
+          onSave={handlePickerSave}
+          onClose={() => setPickerTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Task Detail Modal (view + edit mode) ────────────────────────────────────
+function TaskDetailModal({
+  task, onClose, onUpdate,
+}: {
+  task: TaskRow;
+  onClose: () => void;
+  onUpdate?: (updated: TaskRow) => void;
+}) {
+  const { members: allMembers, roles: allRoles, projectStatuses } = useDataSystem();
+  const availableRoles    = allRoles.length ? allRoles : ['PO', 'DA', 'Dev', 'QC', 'PMC', 'PD', 'BA'];
+  const availableStatuses = projectStatuses.length ? projectStatuses : ['In Progress', 'Done', 'Backlog', 'Chuẩn bị đưa vào làm', 'Định kỳ'];
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving,    setSaving]    = useState(false);
+
+  // ── View state (derived) ──────────────────────────────────────────────────
+  const ownerInfo = parseOwnerDetail(task.detail);
+  const members   = parseMemberRoles(task.role);
+  const isSubtask = task.task?.toLowerCase() === 'subtask';
+
+  // ── Edit state ────────────────────────────────────────────────────────────
+  const [projectName,  setProjectName]  = useState(task.project);
+  const [status,       setStatus]       = useState(task.status);
+  const [loaiDuAn,     setLoaiDuAn]     = useState<'Task' | 'Subtask'>(isSubtask ? 'Subtask' : 'Task');
+  const [owner,        setOwner]        = useState(task.owner ?? '');
+  const [ownerRoles,   setOwnerRoles]   = useState<string[]>(ownerInfo.roles);
+  const [ownerTasks,   setOwnerTasks]   = useState<string[]>(ownerInfo.tasks);
+  const [otherMembers, setOtherMembers] = useState<string[]>(members.map(m => m.name));
+  const [memberRoles,  setMemberRoles]  = useState<Record<string, string[]>>(
+    Object.fromEntries(members.map(m => [m.name, m.roles]))
+  );
+  const [memberTasks,  setMemberTasks]  = useState<Record<string, string[]>>(
+    Object.fromEntries(members.map(m => [m.name, m.tasks]))
+  );
+  const [deadline,     setDeadline]     = useState(task.endDate ?? '');
+  const [link,         setLink]         = useState(task.link ?? '');
+  const [noteText,     setNoteText]     = useState(task.note ?? '');
+  const [pickerTarget, setPickerTarget] = useState<'owner' | string | null>(null);
+  const [pickerRoles,  setPickerRoles]  = useState<string[]>([]);
+
+  function resetEdit() {
+    const oi = parseOwnerDetail(task.detail);
+    const ms = parseMemberRoles(task.role);
+    setProjectName(task.project);
+    setStatus(task.status);
+    setLoaiDuAn(task.task?.toLowerCase() === 'subtask' ? 'Subtask' : 'Task');
+    setOwner(task.owner ?? '');
+    setOwnerRoles(oi.roles);
+    setOwnerTasks(oi.tasks);
+    setOtherMembers(ms.map(m => m.name));
+    setMemberRoles(Object.fromEntries(ms.map(m => [m.name, m.roles])));
+    setMemberTasks(Object.fromEntries(ms.map(m => [m.name, m.tasks])));
+    setDeadline(task.endDate ?? '');
+    setLink(task.link ?? '');
+    setNoteText(task.note ?? '');
+  }
+
+  function toggleOther(name: string) {
+    setOtherMembers(prev => {
+      if (prev.includes(name)) {
+        setMemberRoles(r => { const n = { ...r }; delete n[name]; return n; });
+        setMemberTasks(t => { const n = { ...t }; delete n[name]; return n; });
+        return prev.filter(n => n !== name);
+      }
+      return [...prev, name];
+    });
+  }
+  function openPickerFor(target: 'owner' | string, roles: string[]) {
+    if (!roles.length) return;
+    setPickerTarget(target); setPickerRoles(roles);
+  }
+  function handlePickerSave(tasks: string[]) {
+    if (pickerTarget === 'owner') setOwnerTasks(tasks);
+    else if (pickerTarget) setMemberTasks(prev => ({ ...prev, [pickerTarget]: tasks }));
+    setPickerTarget(null);
+  }
+
+  async function handleSave() {
+    if (!projectName.trim()) return;
+    setSaving(true);
+    const memberStr = otherMembers.length > 0
+      ? encodeMemberRoles(otherMembers.map(n => ({ name: n, roles: memberRoles[n] ?? [], tasks: memberTasks[n] ?? [] })))
+      : null;
+    const updated: TaskRow = {
+      ...task,
+      project:  projectName.trim(),
+      task:     loaiDuAn,
+      status:   status as TaskRow['status'],
+      owner,
+      detail:   encodeOwnerDetail(ownerRoles, ownerTasks),
+      role:     memberStr,
+      endDate:  deadline || null,
+      link:     link.trim() || null,
+      note:     noteText.trim() || null,
+    };
+    try {
+      onUpdate?.(updated);
+      setIsEditing(false);
+    } catch {
+      onUpdate?.(updated);
+      setIsEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={!isEditing ? onClose : undefined}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col" style={{ maxHeight: 'calc(100vh - 32px)' }} onClick={e => e.stopPropagation()}>
+
+        {/* ── Header ── */}
+        <div className="px-6 py-4 border-b border-gray-100 flex items-start justify-between gap-3 shrink-0">
+          <div className="flex-1 min-w-0">
+            {!isEditing && (
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-mono font-semibold text-gray-400 bg-gray-100 px-2 py-0.5 rounded">{task.id}</span>
+                {(() => { const s = getStatusStyle(task.status); return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${s.bg} ${s.text} ${s.border}`}>{task.status}</span>; })()}
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${isSubtask ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>{task.task || 'Task'}</span>
+              </div>
+            )}
+            <h3 className="font-semibold text-gray-900 text-base leading-snug">
+              {isEditing ? 'Chỉnh sửa task' : task.project}
+            </h3>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!isEditing && (
+              <button onClick={() => setIsEditing(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors">
+                <Pencil size={13} />Chỉnh sửa
+              </button>
+            )}
+            <button onClick={() => { if (isEditing) { resetEdit(); setIsEditing(false); } else onClose(); }}
+              className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400"><X size={16} /></button>
+          </div>
+        </div>
+
+        {/* ── View mode ── */}
+        {!isEditing && (
+          <>
+            <div className="px-6 py-5 space-y-5 overflow-y-auto flex-1 min-h-0">
+              {/* Owner */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Owner</p>
+                {task.owner ? (
+                  <div className="p-3 bg-gray-50 rounded-xl space-y-2">
+                    <div className="flex items-center gap-3">
+                      <MemberAvatar name={task.owner} size="md" />
+                      <div>
+                        <p className="text-sm font-semibold text-gray-800">{task.owner}</p>
+                        {ownerInfo.roles.length > 0 && <div className="flex flex-wrap gap-1 mt-1">{ownerInfo.roles.map(r => <RoleChip key={r} role={r} />)}</div>}
+                      </div>
+                    </div>
+                    {ownerInfo.tasks.length > 0 && (
+                      <div className="border-t border-gray-200 pt-2">
+                        <p className="text-xs text-gray-400 mb-1.5">Đầu việc ({ownerInfo.tasks.length})</p>
+                        <ul className="space-y-1">
+                          {ownerInfo.tasks.map(t => (
+                            <li key={t} className="flex items-center gap-2 text-xs text-gray-700">
+                              <CheckCircle2 size={12} className="text-green-500 shrink-0" />{t}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : <p className="text-sm text-gray-400 italic">Chưa có owner</p>}
+              </div>
+              {/* Thành viên khác */}
+              {members.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Thành viên khác ({members.length})</p>
+                  <div className="space-y-2">
+                    {members.map((m, i) => (
+                      <div key={m.name} className="p-2.5 bg-gray-50 rounded-xl space-y-2">
+                        <div className="flex items-center gap-3">
+                          <MemberAvatar name={m.name} size="sm" />
+                          <span className={`text-sm font-medium min-w-[70px] ${CHIP_COLORS[i % CHIP_COLORS.length].split(' ')[1]}`}>{m.name}</span>
+                          {m.roles.length > 0 ? <div className="flex flex-wrap gap-1">{m.roles.map(r => <RoleChip key={r} role={r} />)}</div> : <span className="text-xs text-gray-300">Chưa có vai trò</span>}
+                        </div>
+                        {m.tasks.length > 0 && (
+                          <div className="border-t border-gray-200 pt-2 pl-1">
+                            <p className="text-xs text-gray-400 mb-1">Đầu việc ({m.tasks.length})</p>
+                            <ul className="space-y-1">
+                              {m.tasks.map(t => (
+                                <li key={t} className="flex items-center gap-2 text-xs text-gray-700">
+                                  <CheckCircle2 size={12} className="text-blue-400 shrink-0" />{t}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Deadline + Link */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Deadline</p>
+                  {task.endDate ? <p className="text-sm font-medium text-gray-700">{new Date(task.endDate + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</p> : <p className="text-sm text-gray-300">—</p>}
+                </div>
+                {task.link && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Link</p>
+                    <a href={task.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 hover:underline"><ExternalLink size={13} />Mở link</a>
+                  </div>
+                )}
+              </div>
+              {/* Ghi chú */}
+              {task.note && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Ghi chú</p>
+                  <p className="text-sm text-gray-600 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 leading-relaxed">{task.note}</p>
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-3 border-t border-gray-100 bg-gray-50 flex justify-end shrink-0">
+              <button onClick={onClose} className="px-4 py-2 bg-gray-800 text-white rounded-xl text-sm font-medium hover:bg-gray-700 transition-colors">Đóng</button>
+            </div>
+          </>
+        )}
+
+        {/* ── Edit mode ── */}
+        {isEditing && (
+          <>
+            <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1 min-h-0">
+              {/* Tên dự án */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Tên dự án *</label>
+                <input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} autoFocus
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100" />
+              </div>
+              {/* Trạng thái + Loại */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Trạng thái</label>
+                  <div className="relative">
+                    <select value={status} onChange={e => setStatus(e.target.value)}
+                      className="w-full appearance-none pl-3 pr-7 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500">
+                      {availableStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <ChevronDown size={13} className="absolute right-2.5 top-3 text-gray-400 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Loại dự án</label>
+                  <div className="flex gap-2">
+                    {(['Task', 'Subtask'] as const).map(t => (
+                      <button key={t} type="button" onClick={() => setLoaiDuAn(t)}
+                        className={`flex-1 py-2.5 rounded-xl text-sm font-medium border transition-colors ${
+                          loaiDuAn === t
+                            ? t === 'Subtask' ? 'bg-purple-600 text-white border-purple-600' : 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                        }`}>{t}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {/* Owner */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Owner</label>
+                <div className="relative">
+                  <select value={owner} onChange={e => { setOwner(e.target.value); setOwnerRoles([]); setOwnerTasks([]); }}
+                    className="w-full appearance-none pl-3 pr-7 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500">
+                    <option value="">-- Chọn Owner --</option>
+                    {allMembers.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+                  </select>
+                  <ChevronDown size={13} className="absolute right-2.5 top-3 text-gray-400 pointer-events-none" />
+                </div>
+                {owner && (
+                  <div className="mt-2">
+                    <p className="text-xs text-gray-400 mb-1.5">Vai trò của Owner{ownerRoles.length > 0 && <span className="ml-1 text-green-600 font-semibold">({ownerRoles.join(', ')})</span>}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {availableRoles.map(role => (
+                        <button key={role} type="button"
+                          onClick={() => setOwnerRoles(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role])}
+                          className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${ownerRoles.includes(role) ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-200 hover:border-green-400'}`}>
+                          {role}
+                        </button>
+                      ))}
+                    </div>
+                    {ownerRoles.length > 0 && (
+                      <button type="button" onClick={() => openPickerFor('owner', ownerRoles)}
+                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-green-400 text-xs text-green-700 hover:bg-green-50">
+                        <ClipboardList size={13} />
+                        {ownerTasks.length > 0 ? <><CheckCircle2 size={12} />{ownerTasks.length} đầu việc — Sửa</> : 'Chọn đầu việc cho Owner'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* Thành viên khác */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                  Thành viên khác{otherMembers.length > 0 && <span className="ml-1.5 text-green-600">({otherMembers.length} đã chọn)</span>}
+                </label>
+                <div className="flex flex-wrap gap-2 p-3 border border-gray-200 rounded-xl bg-gray-50 min-h-[44px]">
+                  {allMembers.filter(m => m.name !== owner).map((m, i) => {
+                    const sel = otherMembers.includes(m.name);
+                    return (
+                      <button key={m.name} type="button" onClick={() => toggleOther(m.name)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all ${sel ? `${CHIP_COLORS[i % CHIP_COLORS.length]} border-transparent ring-2 ring-green-400` : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>
+                        <MemberAvatar name={m.name} size="sm" />{m.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                {otherMembers.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs text-gray-400">Vai trò từng thành viên</p>
+                    {otherMembers.map(name => (
+                      <div key={name} className="p-2 bg-gray-50 rounded-xl border border-gray-100 space-y-1.5">
+                        <div className="flex items-start gap-2">
+                          <div className="flex items-center gap-1.5 min-w-[90px] shrink-0 mt-0.5">
+                            <MemberAvatar name={name} size="sm" />
+                            <span className="text-xs font-medium text-gray-700 truncate">{name}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {availableRoles.map(role => (
+                              <button key={role} type="button"
+                                onClick={() => setMemberRoles(prev => { const cur = prev[name] ?? []; return { ...prev, [name]: cur.includes(role) ? cur.filter(r => r !== role) : [...cur, role] }; })}
+                                className={`px-2 py-0.5 rounded-full text-xs font-semibold border transition-colors ${(memberRoles[name] ?? []).includes(role) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300'}`}>
+                                {role}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {(memberRoles[name] ?? []).length > 0 && (
+                          <button type="button" onClick={() => openPickerFor(name, memberRoles[name] ?? [])}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-dashed border-blue-300 text-xs text-blue-700 hover:bg-blue-50">
+                            <ClipboardList size={12} />
+                            {(memberTasks[name] ?? []).length > 0 ? <>{(memberTasks[name] ?? []).length} đầu việc — Sửa</> : 'Chọn đầu việc'}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Deadline */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5"><Calendar size={12} className="inline mr-1" />Deadline</label>
+                <input type="date" value={deadline} onChange={e => setDeadline(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500" />
+              </div>
+              {/* Link */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5"><ExternalLink size={12} className="inline mr-1" />Link</label>
+                <input type="url" value={link} onChange={e => setLink(e.target.value)} placeholder="https://..."
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500" />
+              </div>
+              {/* Ghi chú */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Ghi chú</label>
+                <textarea value={noteText} onChange={e => setNoteText(e.target.value)} rows={3} placeholder="Mô tả thêm về task..."
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm outline-none focus:border-green-500 resize-none" />
+              </div>
+            </div>
+            <div className="flex gap-3 px-6 py-4 border-t border-gray-100 shrink-0">
+              <button type="button" onClick={() => { resetEdit(); setIsEditing(false); }}
+                className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">Hủy</button>
+              <button type="button" onClick={handleSave} disabled={!projectName.trim() || saving}
+                className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 flex items-center justify-center gap-2">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                {saving ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
+            </div>
+            {pickerTarget !== null && (
+              <RoleTaskPickerModal
+                filterRoles={pickerRoles}
+                initialSelected={pickerTarget === 'owner' ? ownerTasks : (memberTasks[pickerTarget] ?? [])}
+                onSave={handlePickerSave}
+                onClose={() => setPickerTarget(null)}
+              />
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -389,6 +1017,8 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
   const [confirmTasks, setConfirmTasks] = useState<TaskRow[]>([]);
   const [confirmState, setConfirmState] = useState<ConfirmState>('idle');
   const [confirmError, setConfirmError] = useState('');
+  const [detailTask,   setDetailTask]   = useState<TaskRow | null>(null);
+  const [hoveredRow,   setHoveredRow]   = useState<string | null>(null);
 
   const config = typeof window !== 'undefined' ? loadSheetsConfig() : null;
   const { members } = useDataSystem();
@@ -399,7 +1029,8 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
       .then(data => {
         setPoolTasks(data);
         const initialPicked: PickedMap = {};
-        data.forEach(t => { if (t.owner) initialPicked[t.id] = t.owner; });
+        // itTaskId có giá trị = task đã được pick (đã copy sang My Tasks)
+        data.forEach(t => { if (t.itTaskId) initialPicked[t.id] = t.owner; });
         setPickedBy(initialPicked);
         setIsFromSheet(!!config?.poolSheet && data.length > 0);
       })
@@ -459,11 +1090,30 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
     setPickedBy(newPickedBy);
     setSelected(new Set());
 
-    if (!cfg?.appsScriptUrl) { setConfirmState('done'); return; }
-
     try {
       const results = await Promise.allSettled(
-        confirmTasks.map(t => api.pickPoolTask(t.id, activeMember, cfg?.poolSheet))
+        confirmTasks.map(t => {
+          // Build assignments cho TẤT CẢ thành viên trong task
+          const ownerInfo  = parseOwnerDetail(t.detail);
+          const memberList = parseMemberRoles(t.role);
+
+          const assignments: Array<{ member: string; role: string; tasks: string }> = [
+            // Owner
+            ...(t.owner ? [{
+              member: t.owner,
+              role:   ownerInfo.roles.join(', '),
+              tasks:  ownerInfo.tasks.join('; '),
+            }] : []),
+            // Các thành viên khác
+            ...memberList.map(m => ({
+              member: m.name,
+              role:   m.roles.join(', '),
+              tasks:  m.tasks.join('; '),
+            })),
+          ].filter(a => a.member.trim() !== '');
+
+          return api.pickPoolTask(t.id, activeMember, cfg?.poolSheet, t.project, assignments);
+        })
       );
       const failed = results.filter(r => r.status === 'rejected').length;
       if (failed > 0) {
@@ -491,9 +1141,9 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
       status:       data.status   ?? 'In Progress',
       startDate:    null,
       endDate:      data.endDate  ?? null,
-      detail:       null,
-      link:         null,
-      note:         null,
+      detail:       data.detail   ?? null,
+      link:         data.link     ?? null,
+      note:         data.note     ?? null,
       sourceSheet:  'Pool',
       sourceRow:    poolTasks.length + 2,
       itTaskId:     null,
@@ -654,18 +1304,20 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
               {filtered.map(task => {
                 const isPicked   = !!pickedBy[task.id];
                 const isSelected = selected.has(task.id);
-                const otherNames = task.role
-                  ? task.role.split(',').map(s => s.trim()).filter(Boolean)
-                  : [];
+                const parsedMembers = parseMemberRoles(task.role);
 
+                const isHovered = hoveredRow === task.id;
                 return (
                   <tr
                     key={task.id}
                     onClick={() => !isPicked && toggle(task.id)}
+                    onMouseEnter={() => setHoveredRow(task.id)}
+                    onMouseLeave={() => setHoveredRow(null)}
                     className={`transition-colors ${
                       isPicked   ? 'bg-gray-50 opacity-70' :
-                      isSelected ? 'bg-green-50 hover:bg-green-100 cursor-pointer' :
-                                   'hover:bg-gray-50 cursor-pointer'
+                      isSelected ? 'bg-green-50 cursor-pointer' :
+                      isHovered  ? 'bg-gray-50 cursor-pointer' :
+                                   'cursor-pointer'
                     }`}
                   >
                     {/* Checkbox */}
@@ -685,10 +1337,23 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
                     </td>
 
                     {/* Tên dự án */}
-                    <td className="px-4 py-3 max-w-[220px]">
-                      <p className={`font-medium text-sm truncate ${isPicked ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
-                        {task.project}
-                      </p>
+                    <td className="px-4 py-3 max-w-[240px]">
+                      <div
+                        className="flex items-center gap-1.5 cursor-pointer"
+                        onClick={e => { e.stopPropagation(); setDetailTask(task); }}
+                      >
+                        <p className={`font-medium text-sm truncate transition-colors ${
+                          isPicked
+                            ? isHovered ? 'text-gray-600 line-through underline underline-offset-2' : 'text-gray-400 line-through'
+                            : isHovered ? 'text-green-800 underline underline-offset-2' : 'text-green-700'
+                        }`}>
+                          {task.project}
+                        </p>
+                        <Eye
+                          size={13}
+                          className={`shrink-0 transition-all ${isHovered ? 'text-green-500 opacity-100' : 'opacity-0'}`}
+                        />
+                      </div>
                     </td>
 
                     {/* Trạng thái */}
@@ -722,10 +1387,10 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
 
                     {/* Thành viên khác */}
                     <td className="px-4 py-3">
-                      {otherNames.length > 0 ? (
+                      {parsedMembers.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
-                          {otherNames.map((name, i) => (
-                            <MemberChip key={name} name={name} index={i} />
+                          {parsedMembers.map((m, i) => (
+                            <MemberChip key={m.name} name={m.name} index={i} />
                           ))}
                         </div>
                       ) : (
@@ -795,6 +1460,17 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
           tasks={confirmTasks} member={activeMember}
           state={confirmState} errorMsg={confirmError}
           onConfirm={executePickConfirmed} onClose={closeConfirm}
+        />
+      )}
+
+      {detailTask && (
+        <TaskDetailModal
+          task={detailTask}
+          onClose={() => setDetailTask(null)}
+          onUpdate={updated => {
+            setPoolTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
+            setDetailTask(updated);
+          }}
         />
       )}
     </div>

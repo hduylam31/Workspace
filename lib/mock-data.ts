@@ -1,4 +1,4 @@
-import type { TaskRow, ITTaskRow, DashboardData, DailyReport } from './types';
+import type { TaskRow, ITTaskRow, DashboardData, DailyReport, RoleTask } from './types';
 
 export const MOCK_TASKS: TaskRow[] = [
   {
@@ -245,77 +245,91 @@ export const MOCK_IT_TASKS: ITTaskRow[] = [
   },
 ];
 
-// ─── Pool Tasks (chưa được assign, để thành viên pick) ───────────────────────
+// ─── Pool Tasks ───────────────────────────────────────────────────────────────
+// itTaskId = null  → chưa pick (tab "Chưa pick")
+// itTaskId = 'PICKED' → đã pick (tab "Đã pick")
 export const MOCK_POOL_TASKS: TaskRow[] = [
+  // ── Chưa pick (5 task) — itTaskId: null ──────────────────────────────────
   {
-    id: 'POOL1', project: 'App/Web AK phase 1.2', task: 'Màn hình đăng nhập / đăng ký v2',
-    owner: '', status: 'Chuẩn bị đưa vào làm', startDate: null, endDate: '2026-06-30',
-    detail: 'Redesign lại màn hình auth, bổ sung login bằng Zalo, Google. UX tối ưu hơn.',
-    link: 'https://figma.com', note: null, role: 'PD',
+    id: 'POOL1', project: 'App/Web AK phase 1.2', task: 'Task',
+    owner: 'Đức Anh', status: 'Chuẩn bị đưa vào làm', startDate: null, endDate: '2026-06-30',
+    detail: 'PO, DA|Viết PRD / User Story; Xác định yêu cầu nghiệp vụ; Phân tích yêu cầu dữ liệu',
+    role: 'Khánh[PMC, PD|Lập kế hoạch sprint; Thiết kế wireframe / mockup; Handoff design cho IT]; Tuyền[PD|Review UI sau khi dev xong; Cập nhật flow UX khi có thay đổi]',
+    link: 'https://figma.com', note: 'Redesign màn hình auth, bổ sung login Zalo/Google.',
     sourceSheet: 'Pool', sourceRow: 2, itTaskId: null, lastModified: '2026-05-18T08:00:00Z',
   },
   {
-    id: 'POOL2', project: 'App/Web AK phase 1.2', task: 'Trang chi tiết sản phẩm — tab đánh giá',
-    owner: '', status: 'Backlog', startDate: null, endDate: '2026-07-15',
-    detail: 'Thêm tab đánh giá sản phẩm: rating, filter theo sao, ảnh từ khách.',
-    link: null, note: 'Đã có wireframe từ tháng 4', role: 'PD',
+    id: 'POOL2', project: 'App/Web AK phase 1.2', task: 'Subtask',
+    owner: 'Trang', status: 'Backlog', startDate: null, endDate: '2026-07-15',
+    detail: 'PD|Thiết kế wireframe / mockup; Prototype & user testing; Handoff design cho IT',
+    role: 'Trình[PMC, DA|Theo dõi tiến độ dự án; Phân tích yêu cầu dữ liệu; Xây dựng dashboard báo cáo]',
+    link: null, note: 'Đã có wireframe từ tháng 4. Thêm tab đánh giá: rating, filter sao.',
     sourceSheet: 'Pool', sourceRow: 3, itTaskId: null, lastModified: '2026-05-10T09:00:00Z',
   },
   {
-    id: 'POOL3', project: 'Voucher & Khuyến mãi', task: 'Luồng voucher sinh nhật tự động',
-    owner: '', status: 'Chuẩn bị đưa vào làm', startDate: null, endDate: '2026-06-20',
-    detail: 'Hệ thống tự tạo voucher sinh nhật cho thành viên, gửi push notification.',
-    link: 'https://docs.google.com', note: null, role: 'DA',
+    id: 'POOL3', project: 'Voucher & Khuyến mãi', task: 'Task',
+    owner: 'Khánh', status: 'Chuẩn bị đưa vào làm', startDate: null, endDate: '2026-06-20',
+    detail: 'DA, PMC|Phân tích yêu cầu dữ liệu; Lập kế hoạch sprint; Cập nhật roadmap',
+    role: 'Đức Anh[PO|Viết PRD / User Story; Prioritize backlog]; Mai[DA|Xây dựng dashboard báo cáo; Phân tích funnel & conversion]',
+    link: 'https://docs.google.com', note: 'Hệ thống tự tạo voucher sinh nhật, gửi push notification.',
     sourceSheet: 'Pool', sourceRow: 4, itTaskId: null, lastModified: '2026-05-15T10:00:00Z',
   },
   {
-    id: 'POOL4', project: 'Shop in shop', task: 'Thiết kế trang partner dashboard',
-    owner: '', status: 'Backlog', startDate: null, endDate: '2026-08-01',
-    detail: 'Dashboard cho đối tác thương hiệu xem doanh số, đơn hàng shop in shop.',
-    link: 'https://figma.com', note: null, role: 'PD',
-    sourceSheet: 'Pool', sourceRow: 5, itTaskId: null, lastModified: '2026-05-12T11:00:00Z',
-  },
-  {
-    id: 'POOL5', project: 'Phân tích dữ liệu', task: 'Báo cáo funnel chuyển đổi tháng',
-    owner: '', status: 'Định kỳ', startDate: '2026-06-01', endDate: '2026-06-05',
-    detail: 'Phân tích funnel từ view → cart → checkout → payment mỗi tháng.',
-    link: null, note: null, role: 'DA',
+    id: 'POOL5', project: 'Phân tích dữ liệu', task: 'Task',
+    owner: 'Mai', status: 'Định kỳ', startDate: '2026-06-01', endDate: '2026-06-05',
+    detail: 'DA|Phân tích funnel & conversion; Xây dựng dashboard báo cáo; Đánh giá A/B test; Cung cấp insight cho PO',
+    role: 'Đức Anh[PO|Review & Accept kết quả IT; Demo sản phẩm với stakeholder]; Trình[PMC|Tổng hợp báo cáo tuần / tháng; Quản lý rủi ro & blockers]',
+    link: null, note: 'Phân tích funnel view → cart → checkout → payment mỗi tháng.',
     sourceSheet: 'Pool', sourceRow: 6, itTaskId: null, lastModified: '2026-05-16T08:30:00Z',
   },
   {
-    id: 'POOL6', project: 'Chăm sóc khách hàng', task: 'SOP xử lý khiếu nại đổi trả',
-    owner: '', status: 'Chuẩn bị đưa vào làm', startDate: null, endDate: '2026-06-15',
-    detail: 'Xây dựng quy trình xử lý khiếu nại đổi trả chuẩn cho team CSKH.',
-    link: 'https://docs.google.com', note: 'Phối hợp với team Ops', role: 'PMC',
-    sourceSheet: 'Pool', sourceRow: 7, itTaskId: null, lastModified: '2026-05-17T14:00:00Z',
-  },
-  {
-    id: 'POOL7', project: 'Roadmap Q3', task: 'Nghiên cứu tính năng subscription',
-    owner: '', status: 'Backlog', startDate: null, endDate: '2026-09-01',
-    detail: 'Khảo sát và nghiên cứu mô hình subscription cho sản phẩm tiêu dùng thường xuyên.',
-    link: null, note: null, role: 'PO',
+    id: 'POOL7', project: 'Roadmap Q3', task: 'Task',
+    owner: 'Đức Anh', status: 'Backlog', startDate: null, endDate: '2026-09-01',
+    detail: 'PO|Viết PRD / User Story; Prioritize backlog; Demo sản phẩm với stakeholder',
+    role: 'Khánh[DA|Phân tích yêu cầu dữ liệu; Cung cấp insight cho PO]; Trang[PMC|Lập kế hoạch sprint; Cập nhật roadmap]',
+    link: null, note: 'Nghiên cứu mô hình subscription cho sản phẩm tiêu dùng thường xuyên.',
     sourceSheet: 'Pool', sourceRow: 8, itTaskId: null, lastModified: '2026-05-14T10:00:00Z',
   },
+  // ── Đã pick (5 task) — itTaskId: 'PICKED' ────────────────────────────────
   {
-    id: 'POOL8', project: 'App/Web AK phase 1.3', task: 'PRD tính năng live stream bán hàng',
-    owner: '', status: 'Chuẩn bị đưa vào làm', startDate: null, endDate: '2026-07-30',
-    detail: 'Viết PRD cho tính năng live stream: host, viewer, giỏ hàng trong stream.',
-    link: 'https://docs.google.com', note: null, role: 'PO',
-    sourceSheet: 'Pool', sourceRow: 9, itTaskId: null, lastModified: '2026-05-19T09:00:00Z',
+    id: 'POOL4', project: 'Shop in shop', task: 'Task',
+    owner: 'Tuyền', status: 'Backlog', startDate: null, endDate: '2026-08-01',
+    detail: 'PD, PMC|Thiết kế wireframe / mockup; Xây dựng design system; Theo dõi tiến độ dự án',
+    role: 'Trang[PD|Prototype & user testing; Thiết kế banner / asset marketing]; Khánh[DA|Phân tích yêu cầu dữ liệu; Đánh giá A/B test]',
+    link: 'https://figma.com', note: 'Dashboard cho đối tác xem doanh số, đơn hàng.',
+    sourceSheet: 'Pool', sourceRow: 5, itTaskId: 'PICKED', lastModified: '2026-05-12T11:00:00Z',
   },
   {
-    id: 'POOL9', project: 'SEO & Performance', task: 'Audit URL structure và canonical',
-    owner: '', status: 'Backlog', startDate: null, endDate: '2026-06-30',
-    detail: 'Kiểm tra toàn bộ URL structure, bổ sung canonical tag, xử lý duplicate content.',
-    link: null, note: null, role: 'PMC',
-    sourceSheet: 'Pool', sourceRow: 10, itTaskId: null, lastModified: '2026-05-13T11:00:00Z',
+    id: 'POOL6', project: 'Chăm sóc khách hàng', task: 'Task',
+    owner: 'Trình', status: 'Chuẩn bị đưa vào làm', startDate: null, endDate: '2026-06-15',
+    detail: 'PMC|Điều phối họp sync team; Quản lý rủi ro & blockers; Cập nhật roadmap',
+    role: 'Tuyền[DA, PO|Phân tích yêu cầu dữ liệu; Xác định yêu cầu nghiệp vụ]; Mai[PMC|Tổng hợp báo cáo tuần / tháng; Theo dõi tiến độ dự án]',
+    link: 'https://docs.google.com', note: 'Phối hợp với team Ops. Xây dựng SOP khiếu nại đổi trả.',
+    sourceSheet: 'Pool', sourceRow: 7, itTaskId: 'PICKED', lastModified: '2026-05-17T14:00:00Z',
   },
   {
-    id: 'POOL10', project: 'Tổng đơn bán kèm', task: 'A/B test vị trí hiển thị bundle',
-    owner: '', status: 'Chuẩn bị đưa vào làm', startDate: '2026-06-01', endDate: '2026-06-20',
-    detail: 'Thực hiện A/B test: hiển thị bundle trước hay sau khi add cart.',
-    link: null, note: 'Cần phối hợp IT để setup experiment', role: 'DA',
-    sourceSheet: 'Pool', sourceRow: 11, itTaskId: null, lastModified: '2026-05-18T15:00:00Z',
+    id: 'POOL8', project: 'App/Web AK phase 1.3', task: 'Task',
+    owner: 'Khánh', status: 'Chuẩn bị đưa vào làm', startDate: null, endDate: '2026-07-30',
+    detail: 'PO, PMC|Viết PRD / User Story; Xác định yêu cầu nghiệp vụ; Lập kế hoạch sprint',
+    role: 'Đức Anh[PO, DA|Prioritize backlog; Review & Accept kết quả IT; Phân tích yêu cầu dữ liệu]; Tuyền[PD|Thiết kế wireframe / mockup; Handoff design cho IT; Review UI sau khi dev xong]',
+    link: 'https://docs.google.com', note: 'PRD live stream: host, viewer, giỏ hàng trong stream.',
+    sourceSheet: 'Pool', sourceRow: 9, itTaskId: 'PICKED', lastModified: '2026-05-19T09:00:00Z',
+  },
+  {
+    id: 'POOL9', project: 'SEO & Performance', task: 'Subtask',
+    owner: 'Trang', status: 'Backlog', startDate: null, endDate: '2026-06-30',
+    detail: 'PMC, DA|Theo dõi tiến độ dự án; Phân tích yêu cầu dữ liệu; Tổng hợp báo cáo tuần / tháng',
+    role: 'Mai[DA|Xây dựng dashboard báo cáo; Phân tích funnel & conversion]; Trình[PMC|Quản lý rủi ro & blockers; Cập nhật roadmap]',
+    link: null, note: 'Kiểm tra URL structure, bổ sung canonical, xử lý duplicate content.',
+    sourceSheet: 'Pool', sourceRow: 10, itTaskId: 'PICKED', lastModified: '2026-05-13T11:00:00Z',
+  },
+  {
+    id: 'POOL10', project: 'Tổng đơn bán kèm', task: 'Task',
+    owner: 'Mai', status: 'Chuẩn bị đưa vào làm', startDate: '2026-06-01', endDate: '2026-06-20',
+    detail: 'DA, PO|Đánh giá A/B test; Cung cấp insight cho PO; Viết PRD / User Story',
+    role: 'Đức Anh[PO|Review & Accept kết quả IT; Demo sản phẩm với stakeholder]; Khánh[PMC, DA|Lập kế hoạch sprint; Theo dõi tiến độ dự án; Phân tích funnel & conversion]',
+    link: null, note: 'Cần phối hợp IT setup experiment. A/B test vị trí hiển thị bundle.',
+    sourceSheet: 'Pool', sourceRow: 11, itTaskId: 'PICKED', lastModified: '2026-05-18T15:00:00Z',
   },
 ];
 
@@ -430,3 +444,30 @@ export const MOCK_DASHBOARD: DashboardData = {
     { quarter: 'Q4', done: 0, total: 4 },
   ],
 };
+
+// ─── Mock Role Tasks ──────────────────────────────────────────────────────────
+export const MOCK_ROLE_TASKS: RoleTask[] = [
+  { stt: 1, role: 'PO', taskName: 'Viết PRD / User Story' },
+  { stt: 2, role: 'PO', taskName: 'Xác định yêu cầu nghiệp vụ' },
+  { stt: 3, role: 'PO', taskName: 'Prioritize backlog' },
+  { stt: 4, role: 'PO', taskName: 'Review & Accept kết quả IT' },
+  { stt: 5, role: 'PO', taskName: 'Demo sản phẩm với stakeholder' },
+  { stt: 1, role: 'PMC', taskName: 'Lập kế hoạch sprint' },
+  { stt: 2, role: 'PMC', taskName: 'Theo dõi tiến độ dự án' },
+  { stt: 3, role: 'PMC', taskName: 'Tổng hợp báo cáo tuần / tháng' },
+  { stt: 4, role: 'PMC', taskName: 'Điều phối họp sync team' },
+  { stt: 5, role: 'PMC', taskName: 'Quản lý rủi ro & blockers' },
+  { stt: 6, role: 'PMC', taskName: 'Cập nhật roadmap' },
+  { stt: 1, role: 'PD', taskName: 'Thiết kế wireframe / mockup' },
+  { stt: 2, role: 'PD', taskName: 'Xây dựng design system' },
+  { stt: 3, role: 'PD', taskName: 'Prototype & user testing' },
+  { stt: 4, role: 'PD', taskName: 'Handoff design cho IT' },
+  { stt: 5, role: 'PD', taskName: 'Review UI sau khi dev xong' },
+  { stt: 6, role: 'PD', taskName: 'Cập nhật flow UX khi có thay đổi' },
+  { stt: 7, role: 'PD', taskName: 'Thiết kế banner / asset marketing' },
+  { stt: 1, role: 'DA', taskName: 'Phân tích yêu cầu dữ liệu' },
+  { stt: 2, role: 'DA', taskName: 'Xây dựng dashboard báo cáo' },
+  { stt: 3, role: 'DA', taskName: 'Phân tích funnel & conversion' },
+  { stt: 4, role: 'DA', taskName: 'Đánh giá A/B test' },
+  { stt: 5, role: 'DA', taskName: 'Cung cấp insight cho PO' },
+];

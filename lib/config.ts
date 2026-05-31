@@ -1,5 +1,4 @@
 export const CONFIG = {
-  APPS_SCRIPT_URL: process.env.NEXT_PUBLIC_APPS_SCRIPT_URL || '',
   USE_MOCK_DATA: process.env.NEXT_PUBLIC_USE_MOCK_DATA !== 'false',
   CACHE_TTL: 5 * 60 * 1000, // 5 minutes
   DOMAIN: process.env.NEXT_PUBLIC_DOMAIN || 'mwg.com.vn',

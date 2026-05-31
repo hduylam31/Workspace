@@ -50,7 +50,7 @@ export default function TaskForm({ task, owner, lockOwner = false, onClose, onSa
   const [progress, setProgress] = useState(0);
   const [saved, setSaved]       = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const hasScript = !!loadSheetsConfig()?.appsScriptUrl;
+  const hasScript = false; // Apps Script đã xóa, sẽ viết lại
 
   const currentStatus = form.status || statuses[0] || 'Chuẩn bị đưa vào làm';
 

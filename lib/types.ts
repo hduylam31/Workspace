@@ -110,3 +110,9 @@ export interface AppUser {
   name: string;
   role: Role;
 }
+
+export interface RoleTask {
+  stt: number;
+  role: string;
+  taskName: string;
+}

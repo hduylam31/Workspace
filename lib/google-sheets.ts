@@ -1,20 +1,32 @@
 import type { TaskRow, ITTaskRow, DailyReport } from './types';
 
 export interface SheetsConfig {
-  // ── Spreadsheet chính (My Tasks, Pool, Reports, Master Data) ──
+  // ── Spreadsheet chính ──────────────────────────────────────────
   spreadsheetId: string;
   apiKey: string;
-  selectedSheets: string[];
-  appsScriptUrl?: string;    // URL Web App để ghi dữ liệu
-  masterDataSheet?: string;  // Sheet chứa Master Data
-  reportSheet?: string;      // Sheet Báo cáo → Overview write-only
-  poolSheet?: string;        // Sheet Pool → Pick Task read/write
+  selectedSheets: string[];    // Sheet cá nhân (My Tasks)
 
-  // ── Spreadsheet IT Tracker (riêng biệt) ──
+  // ── Apps Script Web App (write) ────────────────────────────────
+  appsScriptUrl?: string;        // URL deploy Apps Script Web App
+
+  // ── Pick Task sheets ───────────────────────────────────────────
+  duAnSheet?: string;            // "Dự án"         — danh sách dự án (A:G)
+  roleToTaskSheet?: string;      // "Role to Task"  — master task theo vai trò (A:C)
+  roleToProjectSheet?: string;   // "Role to Project" — phân công member (A:E)
+
+  // ── Other sheets ───────────────────────────────────────────────
+  masterDataSheet?: string;      // Data System — projects, statuses, members
+  reportSheet?: string;          // Báo cáo
+
+  // ── Backward compat (cũ) ───────────────────────────────────────
+  poolSheet?: string;            // deprecated → dùng duAnSheet
+  roleTaskSheet?: string;        // deprecated → dùng roleToTaskSheet
+
+  // ── Spreadsheet IT Tracker (riêng biệt) ───────────────────────
   itTrackerSpreadsheetId?: string;
   itTrackerApiKey?: string;
-  itTrackerSheets?: string[];   // nhiều sheet (04/2026, 05/2026, ...)
-  itTrackerSheet?: string;      // deprecated — backward compat
+  itTrackerSheets?: string[];
+  itTrackerSheet?: string;       // deprecated — backward compat
 }
 
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
@@ -122,47 +134,8 @@ function mapRow(row: unknown[], sheetName: string, rowIndex: number): TaskRow {
   };
 }
 
-// ─── WRITE via Apps Script Web App (qua Next.js proxy để tránh CORS) ────────
-//
-// Browser gọi thẳng script.google.com bị CORS block do redirect cross-origin.
-// Giải pháp: route qua /api/script (same-origin) → server-side fetch không bị CORS.
-
-const PROXY_URL = '/api/script';
-
-export async function appsScriptPost<T>(appsScriptUrl: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(PROXY_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-script-url': appsScriptUrl,   // server dùng header này để forward request
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => `HTTP ${res.status}`);
-    throw new Error(errText);
-  }
-  const json = await res.json();
-  if (!json.success) throw new Error(json.error ?? 'Apps Script error');
-  return json.data as T;
-}
-
-export async function appsScriptGet<T>(appsScriptUrl: string, params: Record<string, string>): Promise<T> {
-  const searchParams = new URLSearchParams(params).toString();
-  const proxyUrl = searchParams ? `${PROXY_URL}?${searchParams}` : PROXY_URL;
-  const res = await fetch(proxyUrl, {
-    headers: { 'x-script-url': appsScriptUrl },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json.success) throw new Error(json.error ?? 'Apps Script error');
-  return json.data as T;
-}
-
-export async function testAppsScriptConnection(url: string): Promise<boolean> {
-  const data = await appsScriptGet<{ status: string }>(url, { action: 'ping' });
-  return data.status === 'ok';
-}
+// ─── WRITE (placeholder — sẽ viết lại) ──────────────────────────────────────
+// Apps Script đã được xóa. Phần ghi dữ liệu sẽ được viết lại từ đầu.
 
 // ─── Đọc Data System (Projects + Statuses + Roles) trực tiếp qua API ────────
 
@@ -354,13 +327,13 @@ export async function fetchAllITTrackerSheets(
 
 // ─── Pool Task sheet ──────────────────────────────────────────────────────────
 // Cấu trúc mới:
-// A=ID  B=Tên dự án  C=Trạng thái  D=Loại dự án  E=Owner  F=Thành viên khác  G=Deadline
+// A=ID  B=Tên dự án  C=Trạng thái  D=Loại dự án  E=Owner  F=Thành viên khác  G=Deadline  H=Vai trò Owner
 export async function fetchPoolSheet(
   spreadsheetId: string,
   apiKey: string,
   sheetName: string,
 ): Promise<TaskRow[]> {
-  const range = encodeURIComponent(`${sheetName}!A:G`);
+  const range = encodeURIComponent(`${sheetName}!A:H`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -390,7 +363,7 @@ export async function fetchPoolSheet(
       task:         get(3) ?? 'Task',            // D — Loại dự án (Task / Subtask)
       owner:        get(4) ?? '',                // E — Owner
       role:         get(5),                      // F — Thành viên khác (CSV)
-      detail:       null,
+      detail:       get(7),                      // H — Vai trò Owner (CSV, vd "PO, DA")
       link:         null,
       status:       (get(2) ?? 'In Progress') as TaskRow['status'], // C — Trạng thái
       startDate:    null,
@@ -477,4 +450,194 @@ export async function fetchReportSheet(
         submittedAt:  get(11) ?? new Date().toISOString(), // L
       } satisfies DailyReport;
     });
+}
+
+// ─── Role Task sheet ──────────────────────────────────────────────────────────
+// Cấu trúc: A=STT  B=Vai trò  C=Tên đầu việc
+export async function fetchRoleTaskSheet(
+  spreadsheetId: string,
+  apiKey: string,
+  sheetName: string,
+): Promise<import('./types').RoleTask[]> {
+  const range = encodeURIComponent(`${sheetName}!A:C`);
+  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = await res.json();
+  const rows: unknown[][] = json.values ?? [];
+  return rows
+    .filter((row, idx) => idx > 0 && String(row[2] ?? '').trim() !== '')
+    .map(row => ({
+      stt:      Number(row[0]) || 0,
+      role:     String(row[1] ?? '').trim(),
+      taskName: String(row[2] ?? '').trim(),
+    }));
+}
+
+// ─── "Dự án" sheet (Pick Task pool) ──────────────────────────────────────────
+// Cấu trúc: A=ID · B=Tên dự án · C=Trạng thái · D=Loại dự án · E=Owner · F=Thành viên khác · G=Deadline
+export async function fetchDuAnSheet(
+  spreadsheetId: string,
+  apiKey: string,
+  sheetName: string,
+): Promise<TaskRow[]> {
+  const range = encodeURIComponent(`${sheetName}!A:G`);
+  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  const rows: unknown[][] = json.values ?? [];
+
+  return rows
+    .filter((row, idx) => {
+      if (idx === 0) return false;
+      const id = String(row[0] ?? '').trim();
+      return id !== '' && id.toLowerCase() !== 'id';
+    })
+    .map((row, idx) => {
+      const get = (i: number) =>
+        (row[i] !== undefined && row[i] !== null && String(row[i]).trim() !== '')
+          ? String(row[i]).trim()
+          : null;
+      return {
+        id:           get(0) ?? `DA${idx + 2}`,
+        project:      get(1) ?? '',
+        status:       (get(2) ?? 'In Progress') as TaskRow['status'],
+        task:         get(3) ?? 'Task',
+        owner:        get(4) ?? '',
+        role:         get(5),                    // Thành viên khác (tên, CSV)
+        endDate:      parseSheetDate(row[6]),
+        detail:       null,                      // Sẽ merge từ Role to Project
+        link:         null,
+        note:         null,
+        startDate:    null,
+        sourceSheet:  sheetName,
+        sourceRow:    idx + 2,
+        itTaskId:     null,                      // null = chưa pick
+        lastModified: new Date().toISOString(),
+      } satisfies TaskRow;
+    });
+}
+
+// ─── "Role to Task" sheet (master task theo vai trò) ─────────────────────────
+// Cấu trúc: A=ID · B=Vai trò · C=Tên Task
+export async function fetchRoleToTaskSheet(
+  spreadsheetId: string,
+  apiKey: string,
+  sheetName: string,
+): Promise<import('./types').RoleTask[]> {
+  const range = encodeURIComponent(`${sheetName}!A:C`);
+  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = await res.json();
+  const rows: unknown[][] = json.values ?? [];
+  return rows
+    .filter((row, idx) => idx > 0 && String(row[2] ?? '').trim() !== '')
+    .map((row, idx) => ({
+      stt:      idx + 1,
+      role:     String(row[1] ?? '').trim(),
+      taskName: String(row[2] ?? '').trim(),
+    }));
+}
+
+// ─── "Role to Project" sheet (phân công member + role + task theo dự án) ──────
+// Cấu trúc: A=ID dự án · B=Tên dự án · C=Thành viên · D=Vai trò · E=Task (multi, xuống dòng hoặc dấu phẩy)
+export interface RoleToProjectRow {
+  projectId:   string;
+  projectName: string;
+  member:      string;
+  role:        string;
+  tasks:       string[];
+}
+
+export async function fetchRoleToProjectSheet(
+  spreadsheetId: string,
+  apiKey: string,
+  sheetName: string,
+): Promise<RoleToProjectRow[]> {
+  const range = encodeURIComponent(`${sheetName}!A:E`);
+  const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = await res.json();
+  const rows: unknown[][] = json.values ?? [];
+  return rows
+    .filter((row, idx) => idx > 0 && String(row[0] ?? '').trim() !== '')
+    .map(row => {
+      const get = (i: number) => String(row[i] ?? '').trim();
+      // Task cell: có thể là newline-separated hoặc comma-separated
+      const tasksRaw = get(4);
+      const tasks = tasksRaw
+        ? tasksRaw.split(/[\n,;]+/).map(t => t.trim()).filter(Boolean)
+        : [];
+      return {
+        projectId:   get(0),
+        projectName: get(1),
+        member:      get(2),
+        role:        get(3),
+        tasks,
+      };
+    });
+}
+
+// ─── Merge "Dự án" + "Role to Project" → TaskRow[] ───────────────────────────
+// Projects có assignment trong Role to Project → itTaskId = 'PICKED'
+// detail = owner's roles+tasks encoded, role = other members' roles+tasks encoded
+export function mergeProjectAssignments(
+  projects: TaskRow[],
+  assignments: RoleToProjectRow[],
+): TaskRow[] {
+  // Group assignments by projectId
+  const byProject = new Map<string, RoleToProjectRow[]>();
+  assignments.forEach(a => {
+    if (!byProject.has(a.projectId)) byProject.set(a.projectId, []);
+    byProject.get(a.projectId)!.push(a);
+  });
+
+  return projects.map(project => {
+    const projectAssignments = byProject.get(project.id) ?? [];
+    if (!projectAssignments.length) return project;
+
+    // Owner assignments (cùng tên với owner)
+    const ownerRows  = projectAssignments.filter(a => a.member === project.owner);
+    // Other members
+    const otherRows  = projectAssignments.filter(a => a.member !== project.owner);
+
+    // Encode detail: "R1, R2|Task1; Task2"
+    let detail: string | null = null;
+    if (ownerRows.length > 0) {
+      const roles = ownerRows.map(a => a.role).join(', ');
+      const tasks = ownerRows.flatMap(a => a.tasks).join('; ');
+      detail = tasks ? `${roles}|${tasks}` : roles;
+    }
+
+    // Encode role: "Name[R1, R2|Task1; Task2]; Name2[...]"
+    let role: string | null = project.role; // giữ tên thành viên từ Dự án sheet
+    if (otherRows.length > 0) {
+      const memberMap = new Map<string, { roles: string[]; tasks: string[] }>();
+      otherRows.forEach(a => {
+        if (!memberMap.has(a.member)) memberMap.set(a.member, { roles: [], tasks: [] });
+        const entry = memberMap.get(a.member)!;
+        if (!entry.roles.includes(a.role)) entry.roles.push(a.role);
+        entry.tasks.push(...a.tasks);
+      });
+      role = [...memberMap.entries()].map(([name, { roles, tasks }]) => {
+        const inner = tasks.length
+          ? `${roles.join(', ')}|${tasks.join('; ')}`
+          : roles.join(', ');
+        return `${name}[${inner}]`;
+      }).join('; ');
+    }
+
+    return {
+      ...project,
+      detail,
+      role,
+      itTaskId: 'PICKED', // có assignment = đã pick
+    };
+  });
 }

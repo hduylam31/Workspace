@@ -2,11 +2,11 @@
 import { useState, useEffect } from 'react';
 import {
   X, Link2, Loader2, CheckCircle, AlertCircle,
-  ChevronDown, Trash2, Zap, Database, Monitor,
+  ChevronDown, Trash2, Database, Monitor,
 } from 'lucide-react';
 import {
   fetchSheetNames, saveSheetsConfig, loadSheetsConfig,
-  clearSheetsConfig, testAppsScriptConnection, type SheetsConfig,
+  clearSheetsConfig, type SheetsConfig,
 } from '@/lib/google-sheets';
 
 interface Props {
@@ -54,10 +54,14 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
   // ── Spreadsheet chính ──
   const [spreadsheetId, setSpreadsheetId]     = useState('');
   const [apiKey, setApiKey]                   = useState('');
-  const [appsScriptUrl, setAppsScriptUrl]     = useState('');
-  const [masterDataSheet, setMasterDataSheet] = useState('');
-  const [reportSheet, setReportSheet]         = useState('');
-  const [poolSheet, setPoolSheet]             = useState('');
+  const [masterDataSheet,    setMasterDataSheet]    = useState('');
+  const [reportSheet,        setReportSheet]        = useState('');
+  const [appsScriptUrl,      setAppsScriptUrl]      = useState('');
+  const [duAnSheet,          setDuAnSheet]          = useState('Dự án');
+  const [roleToTaskSheet,    setRoleToTaskSheet]    = useState('Role to Task');
+  const [roleToProjectSheet, setRoleToProjectSheet] = useState('Role to Project');
+  // backward compat
+  const [poolSheet, setPoolSheet] = useState('');
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [selectedSheets, setSelectedSheets]   = useState<string[]>([]);
 
@@ -74,11 +78,8 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
   // ── UI state ──
   const [step, setStep]               = useState<'input' | 'select' | 'done'>('input');
   const [loading, setLoading]         = useState(false);
-  const [testingScript, setTestingScript] = useState(false);
-  const [scriptOk, setScriptOk]       = useState<boolean | null>(null);
   const [error, setError]             = useState('');
   const [showApiHelp, setShowApiHelp] = useState(false);
-  const [showScriptHelp, setShowScriptHelp] = useState(false);
 
   // ── Load saved config ──
   useEffect(() => {
@@ -86,9 +87,12 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
     if (!saved) return;
     setSpreadsheetId(saved.spreadsheetId);
     setApiKey(saved.apiKey);
-    setAppsScriptUrl(saved.appsScriptUrl ?? '');
     setMasterDataSheet(saved.masterDataSheet ?? '');
     setReportSheet(saved.reportSheet ?? '');
+    setAppsScriptUrl(saved.appsScriptUrl ?? '');
+    setDuAnSheet(saved.duAnSheet ?? saved.poolSheet ?? 'Dự án');
+    setRoleToTaskSheet(saved.roleToTaskSheet ?? saved.roleTaskSheet ?? 'Role to Task');
+    setRoleToProjectSheet(saved.roleToProjectSheet ?? 'Role to Project');
     setPoolSheet(saved.poolSheet ?? '');
     setSelectedSheets(saved.selectedSheets);
     if (saved.itTrackerSpreadsheetId) {
@@ -182,23 +186,17 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
     setItSheets(prev => prev.includes(name) ? prev.filter(s => s !== name) : [...prev, name]);
   }
 
-  async function handleTestScript() {
-    if (!appsScriptUrl.trim()) return;
-    setTestingScript(true); setScriptOk(null);
-    try { setScriptOk(await testAppsScriptConnection(appsScriptUrl.trim())); }
-    catch { setScriptOk(false); }
-    finally { setTestingScript(false); }
-  }
-
   function handleSave() {
     const config: SheetsConfig = {
       spreadsheetId,
-      apiKey:          apiKey.trim(),
+      apiKey:              apiKey.trim(),
       selectedSheets,
-      appsScriptUrl:   appsScriptUrl.trim()   || undefined,
-      masterDataSheet: masterDataSheet.trim() || undefined,
-      reportSheet:     reportSheet.trim()     || undefined,
-      poolSheet:       poolSheet.trim()       || undefined,
+      appsScriptUrl:       appsScriptUrl.trim()       || undefined,
+      masterDataSheet:     masterDataSheet.trim()    || undefined,
+      reportSheet:         reportSheet.trim()        || undefined,
+      duAnSheet:           duAnSheet.trim()          || 'Dự án',
+      roleToTaskSheet:     roleToTaskSheet.trim()    || 'Role to Task',
+      roleToProjectSheet:  roleToProjectSheet.trim() || 'Role to Project',
       itTrackerSpreadsheetId: itConnected && itSpreadsheetId.trim() ? itSpreadsheetId.trim() : undefined,
       itTrackerApiKey:        itConnected && itApiKey.trim()        ? itApiKey.trim()        : undefined,
       itTrackerSheets:        itConnected && itSheets.length        ? itSheets              : undefined,
@@ -210,12 +208,12 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
 
   function handleDisconnect() {
     clearSheetsConfig();
-    setSpreadsheetId(''); setApiKey(''); setAppsScriptUrl('');
-    setMasterDataSheet(''); setReportSheet(''); setPoolSheet('');
+    setSpreadsheetId(''); setApiKey('');
+    setAppsScriptUrl(''); setMasterDataSheet(''); setReportSheet('');
+    setDuAnSheet('Dự án'); setRoleToTaskSheet('Role to Task'); setRoleToProjectSheet('Role to Project');
     setSelectedSheets([]); setAvailableSheets([]);
     setItSpreadsheetId(''); setItApiKey(''); setItSheets([]);
     setItAvailableSheets([]); setItConnected(false); setItError('');
-    setScriptOk(null);
     setStep('input');
   }
 
@@ -291,7 +289,9 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
               <div className="grid grid-cols-1 gap-1.5">
                 {[
                   { icon: '📝', label: 'Sheet Báo cáo', value: reportSheet, desc: 'Overview → ghi báo cáo' },
-                  { icon: '🎯', label: 'Sheet Pool Task', value: poolSheet, desc: 'Pick Task → đọc/ghi task' },
+                  { icon: '🎯', label: 'Sheet Dự án',          value: duAnSheet,          desc: 'Pick Task — danh sách dự án' },
+                  { icon: '📋', label: 'Role to Task',          value: roleToTaskSheet,    desc: 'Master task theo vai trò' },
+                  { icon: '🔗', label: 'Role to Project',       value: roleToProjectSheet, desc: 'Phân công member theo dự án' },
                   { icon: '⚙️', label: 'Sheet Master Data', value: masterDataSheet, desc: 'Danh sách dự án/trạng thái' },
                 ].map(({ icon, label, value, desc }) => (
                   <div key={label} className={`flex items-center gap-3 px-3 py-2 rounded-xl border text-xs ${
@@ -303,17 +303,6 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                     <span className="ml-auto text-gray-400">{desc}</span>
                   </div>
                 ))}
-              </div>
-
-              {/* Apps Script */}
-              <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs ${
-                appsScriptUrl ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-gray-50 border-gray-200 text-gray-500'
-              }`}>
-                <Zap size={13} className={appsScriptUrl ? 'text-purple-500 shrink-0' : 'text-gray-400 shrink-0'} />
-                <span>{appsScriptUrl
-                  ? '✅ Apps Script đã cấu hình — Ghi task/báo cáo xuống Sheets'
-                  : '⚠️ Chưa có Apps Script — Chỉ đọc, không ghi được'}
-                </span>
               </div>
 
               <div className="flex gap-3 pt-1">
@@ -360,19 +349,38 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                 </div>
               </div>
 
-              {/* Báo cáo + Pool pickers */}
+              {/* Báo cáo */}
               <SheetRadioPicker
                 name="report" label="📝 Sheet Báo cáo" value={reportSheet} onChange={setReportSheet}
                 sheets={availableSheets}
-                desc="Overview ghi báo cáo hằng ngày xuống sheet này (write-only)"
+                desc="Overview ghi báo cáo hằng ngày xuống sheet này"
                 hint="Cột: A=ID · B=Date · C=Period · D=Member · E=Project · F=Progress · G=Status · H=Đã làm · I=Kế hoạch · J=Blockers · K=SubmittedAt"
               />
-              <SheetRadioPicker
-                name="pool" label="🎯 Sheet Pool Task" value={poolSheet} onChange={setPoolSheet}
-                sheets={availableSheets}
-                desc="Pick Task đọc danh sách task từ sheet này, ghi lại khi member pick"
-                hint="Cấu trúc: A=ID · B=Tên dự án · C=Task · D=Owner · E=Vai trò · F=Chi tiết · G=Link · H=Bắt đầu · I=Kết thúc (không có cột Status)"
-              />
+
+              {/* Pick Task sheets */}
+              <div className="border-t border-gray-200 pt-4 space-y-3">
+                <p className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                  🎯 Pick Task sheets
+                </p>
+                <SheetRadioPicker
+                  name="duAn" label="📁 Sheet Dự án" value={duAnSheet} onChange={setDuAnSheet}
+                  sheets={availableSheets}
+                  desc="Danh sách dự án — Pick Task đọc + ghi vào đây"
+                  hint="Cột: A=ID · B=Tên dự án · C=Trạng thái · D=Loại · E=Owner · F=Thành viên khác · G=Deadline"
+                />
+                <SheetRadioPicker
+                  name="roleToTask" label="📋 Role to Task" value={roleToTaskSheet} onChange={setRoleToTaskSheet}
+                  sheets={availableSheets}
+                  desc="Master data task theo vai trò (PO, PMC, PD, DA)"
+                  hint="Cột: A=ID · B=Vai trò · C=Tên Task"
+                />
+                <SheetRadioPicker
+                  name="roleToProject" label="🔗 Role to Project" value={roleToProjectSheet} onChange={setRoleToProjectSheet}
+                  sheets={availableSheets}
+                  desc="Phân công member + vai trò + task theo từng dự án (ghi khi pick)"
+                  hint="Cột: A=ID dự án · B=Tên dự án · C=Thành viên · D=Vai trò · E=Task"
+                />
+              </div>
 
               {/* Task sheets cá nhân */}
               <div>
@@ -383,7 +391,7 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                   {availableSheets.map(s => {
                     const isPersonal = PERSONAL_SHEETS.includes(s);
                     const isMaster = s === masterDataSheet;
-                    const isFunc = s === reportSheet || s === poolSheet;
+                    const isFunc = s === reportSheet || s === duAnSheet || s === roleToTaskSheet || s === roleToProjectSheet;
                     return (
                       <label key={s} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer border-b border-gray-100 last:border-0 transition-colors ${
                         isMaster || isFunc ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'hover:bg-gray-50'
@@ -555,38 +563,21 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
                 )}
               </div>
 
-              {/* Apps Script */}
+              {/* Apps Script URL */}
               <div className="border-t border-gray-100 pt-4">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
-                    <Zap size={14} className="text-purple-500" />
-                    Apps Script URL <span className="text-gray-400 font-normal">(để ghi task/báo cáo)</span>
-                  </label>
-                  <button onClick={() => setShowScriptHelp(!showScriptHelp)} className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-0.5">
-                    Hướng dẫn <ChevronDown size={12} className={showScriptHelp ? 'rotate-180' : ''} />
-                  </button>
-                </div>
-                <div className="flex gap-2">
-                  <input value={appsScriptUrl} onChange={e => { setAppsScriptUrl(e.target.value); setScriptOk(null); }}
-                    placeholder="https://script.google.com/macros/s/.../exec"
-                    className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-100 font-mono" />
-                  {appsScriptUrl.trim() && (
-                    <button onClick={handleTestScript} disabled={testingScript}
-                      className="px-3 py-2.5 border border-gray-200 rounded-xl text-xs text-gray-600 hover:bg-gray-50 shrink-0">
-                      {testingScript ? <Loader2 size={14} className="animate-spin" /> : 'Test'}
-                    </button>
-                  )}
-                </div>
-                {scriptOk === true  && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><CheckCircle size={12} /> Kết nối thành công!</p>}
-                {scriptOk === false && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><AlertCircle size={12} /> Không kết nối được</p>}
-                {showScriptHelp && (
-                  <div className="mt-2 p-3 bg-purple-50 border border-purple-100 rounded-xl text-xs text-purple-800 space-y-1">
-                    <p className="font-medium">Deploy Apps Script:</p>
-                    <p>1. Mở Spreadsheet → Extensions → Apps Script</p>
-                    <p>2. Dán code từ <code className="bg-purple-100 px-1 rounded">apps-script/workspace-api.gs</code></p>
-                    <p>3. Deploy → New deployment → Web app · Access: <strong>Anyone</strong></p>
-                  </div>
-                )}
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  ⚡ Apps Script URL <span className="text-gray-400 font-normal">(để ghi dữ liệu)</span>
+                </label>
+                <input
+                  value={appsScriptUrl}
+                  onChange={e => setAppsScriptUrl(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-100 font-mono"
+                />
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Deploy <code className="bg-gray-100 px-1 rounded">apps-script/workspace-api.gs</code> →
+                  Extensions → Apps Script → Deploy → Web App · Access: <strong>Anyone</strong>
+                </p>
               </div>
 
               {/* ── IT Tracker — Spreadsheet riêng ── */}
