@@ -31,6 +31,20 @@ export interface SheetsConfig {
 
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
+// ─── Giá trị mặc định (KHÔNG gồm API Key) ────────────────────────────────────
+// Dùng để tự điền sẵn form Kết nối — API Key vẫn phải nhập tay 1 lần,
+// sau đó được lưu vào localStorage của trình duyệt đó cho các lần sau.
+export const DEFAULT_FORM_VALUES = {
+  spreadsheetId:      '1R62GTNaWOn4zMbm_Po_MdXfwB3lLnwCJhJm07zeZNUk',
+  selectedSheets:     ['Đức Anh', 'Khánh', 'Tuyền', 'Trang', 'Trình', 'Mai'],
+  masterDataSheet:    'Data System',
+  reportSheet:        'Báo cáo',
+  duAnSheet:          'Dự án',
+  roleToTaskSheet:    'Role to Task',
+  roleToProjectSheet: 'Role to Project',
+  itTrackerSpreadsheetId: '1UE90IF07JY0B-Gj93I9XJzHG5y14wGemPoBbrAjUm9s',
+};
+
 // Lấy danh sách tên sheets trong spreadsheet
 export async function fetchSheetNames(spreadsheetId: string, apiKey: string): Promise<string[]> {
   const url = `${SHEETS_API}/${spreadsheetId}?key=${apiKey}&fields=sheets.properties.title`;

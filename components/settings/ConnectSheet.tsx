@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   fetchSheetNames, saveSheetsConfig, loadSheetsConfig,
-  clearSheetsConfig, type SheetsConfig,
+  clearSheetsConfig, DEFAULT_FORM_VALUES, type SheetsConfig,
 } from '@/lib/google-sheets';
 
 interface Props {
@@ -51,22 +51,22 @@ function SheetRadioPicker({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function ConnectSheet({ onClose, onConnect }: Props) {
-  // ── Spreadsheet chính ──
-  const [spreadsheetId, setSpreadsheetId]     = useState('');
+  // ── Spreadsheet chính (tự điền sẵn ID/tên sheet mặc định, API Key để trống) ──
+  const [spreadsheetId, setSpreadsheetId]     = useState(DEFAULT_FORM_VALUES.spreadsheetId);
   const [apiKey, setApiKey]                   = useState('');
-  const [masterDataSheet,    setMasterDataSheet]    = useState('');
-  const [reportSheet,        setReportSheet]        = useState('');
+  const [masterDataSheet,    setMasterDataSheet]    = useState(DEFAULT_FORM_VALUES.masterDataSheet);
+  const [reportSheet,        setReportSheet]        = useState(DEFAULT_FORM_VALUES.reportSheet);
   const [appsScriptUrl,      setAppsScriptUrl]      = useState('');
-  const [duAnSheet,          setDuAnSheet]          = useState('Dự án');
-  const [roleToTaskSheet,    setRoleToTaskSheet]    = useState('Role to Task');
-  const [roleToProjectSheet, setRoleToProjectSheet] = useState('Role to Project');
+  const [duAnSheet,          setDuAnSheet]          = useState(DEFAULT_FORM_VALUES.duAnSheet);
+  const [roleToTaskSheet,    setRoleToTaskSheet]    = useState(DEFAULT_FORM_VALUES.roleToTaskSheet);
+  const [roleToProjectSheet, setRoleToProjectSheet] = useState(DEFAULT_FORM_VALUES.roleToProjectSheet);
   // backward compat
   const [poolSheet, setPoolSheet] = useState('');
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
-  const [selectedSheets, setSelectedSheets]   = useState<string[]>([]);
+  const [selectedSheets, setSelectedSheets]   = useState<string[]>(DEFAULT_FORM_VALUES.selectedSheets);
 
   // ── Spreadsheet IT Tracker (riêng) ──
-  const [itSpreadsheetId, setItSpreadsheetId] = useState('');
+  const [itSpreadsheetId, setItSpreadsheetId] = useState(DEFAULT_FORM_VALUES.itTrackerSpreadsheetId);
   const [itApiKey, setItApiKey]               = useState('');
   const [itSheets, setItSheets]               = useState<string[]>([]);
   const [itAvailableSheets, setItAvailableSheets] = useState<string[]>([]);

@@ -2,6 +2,7 @@ import { ALL_STATUSES } from './config';
 import {
   loadSheetsConfig,
   fetchAllITTrackerSheets,
+  fetchSheetNames,
   fetchReportSheet,
   fetchRoleToTaskSheet,
   fetchDuAnSheet,
@@ -51,7 +52,7 @@ export async function getPoolTasksFromSheet(): Promise<TaskRow[]> {
   const cfg = loadSheetsConfig();
   // Hỗ trợ tên mới (duAnSheet) và tên cũ (poolSheet) để backward compat
   const sheetName = cfg?.duAnSheet || cfg?.poolSheet;
-  if (!cfg?.spreadsheetId || !cfg?.apiKey || !sheetName) return MOCK_POOL_TASKS;
+  if (!cfg?.spreadsheetId || !cfg?.apiKey || !sheetName) return [];
 
   try {
     const projects    = await fetchDuAnSheet(cfg.spreadsheetId, cfg.apiKey, sheetName);
@@ -78,13 +79,24 @@ export async function getRoleTasksFromSheet(): Promise<RoleTask[]> {
 
 export async function getITTasksFromSheet(): Promise<ITTaskRow[]> {
   const cfg = loadSheetsConfig();
-  const sheets = cfg?.itTrackerSheets?.length
-    ? cfg.itTrackerSheets
-    : cfg?.itTrackerSheet ? [cfg.itTrackerSheet] : null;
-  if (!sheets) return [];
   const spreadsheetId = cfg?.itTrackerSpreadsheetId || cfg?.spreadsheetId;
   const apiKey        = cfg?.itTrackerApiKey        || cfg?.apiKey;
   if (!spreadsheetId || !apiKey) return [];
+
+  let sheets = cfg?.itTrackerSheets?.length
+    ? cfg.itTrackerSheets
+    : cfg?.itTrackerSheet ? [cfg.itTrackerSheet] : null;
+
+  // Chưa chọn sheet cụ thể → tự dò các sheet dạng "MM/YYYY" (mỗi sheet = 1 tháng)
+  if (!sheets) {
+    try {
+      const names = await fetchSheetNames(spreadsheetId, apiKey);
+      const monthSheets = names.filter(s => /^\d{2}\/\d{4}$/.test(s.trim()));
+      sheets = monthSheets.length ? monthSheets : names;
+    } catch { return []; }
+  }
+  if (!sheets.length) return [];
+
   try { return await fetchAllITTrackerSheets(spreadsheetId, apiKey, sheets); }
   catch { return []; }
 }
@@ -109,23 +121,18 @@ export const api = {
   getPoolTasks: () => getPoolTasksFromSheet(),
   getRoleTasks: () => getRoleTasksFromSheet(),
 
-  getDashboard: (params?: { dateFrom?: string; dateTo?: string }) =>
-    apiFetch<DashboardData>('getDashboard', params as Record<string, string>),
+  getDashboard: (): Promise<DashboardData> => apiFetch<DashboardData>('getDashboard'),
 
-  getProjects:  (masterDataSheet?: string) =>
-    apiFetch<{ id: string; name: string }[]>('getProjects', masterDataSheet ? { masterDataSheet } : undefined),
+  getProjects:  (): Promise<{ id: string; name: string }[]> => apiFetch<{ id: string; name: string }[]>('getProjects'),
 
   getMembers:   () =>
     apiFetch<{ id: string; name: string }[]>('getMembers'),
 
-  getStatuses:  (masterDataSheet?: string) =>
-    apiFetch<string[]>('getStatuses', masterDataSheet ? { masterDataSheet } : undefined),
+  getStatuses:  (): Promise<string[]> => apiFetch<string[]>('getStatuses'),
 
-  getRoles:     (masterDataSheet?: string) =>
-    apiFetch<string[]>('getRoles', masterDataSheet ? { masterDataSheet } : undefined),
+  getRoles:     (): Promise<string[]> => apiFetch<string[]>('getRoles'),
 
-  getReports:   (params?: { reportSheet?: string; member?: string; date?: string }) =>
-    apiFetch<DailyReport[]>('getReports', params as Record<string, string>),
+  getReports:   (): Promise<DailyReport[]> => apiFetch<DailyReport[]>('getReports'),
 
   // ── Task CRUD (stub) ─────────────────────────────────────────────────────
   addTask:          (data: Partial<TaskRow>) =>
