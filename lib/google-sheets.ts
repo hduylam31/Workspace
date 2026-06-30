@@ -34,7 +34,7 @@ const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 // Lấy danh sách tên sheets trong spreadsheet
 export async function fetchSheetNames(spreadsheetId: string, apiKey: string): Promise<string[]> {
   const url = `${SHEETS_API}/${spreadsheetId}?key=${apiKey}&fields=sheets.properties.title`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
@@ -53,7 +53,7 @@ export async function fetchSheetTasks(
   // A=ID(formula) · B=Dự án · C=Task · D=Owner(formula) · E=Vai trò · F=Chi tiết · G=Link · H=Status · I=Bắt đầu · J=Kết thúc
   const range = encodeURIComponent(`${sheetName}!A:J`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
@@ -61,14 +61,15 @@ export async function fetchSheetTasks(
   const json = await res.json();
   const rows: unknown[][] = json.values ?? [];
 
-  // Tìm header row (dòng có "ID" hoặc bỏ qua dòng 1 nếu là header)
-  const dataRows = rows.filter((row, idx) => {
-    if (idx === 0) return false; // bỏ header
-    const id = String(row[0] ?? '').trim();
-    return id !== '' && id !== 'ID';
-  });
-
-  return dataRows.map((row, idx) => mapRow(row, sheetName, idx + 2));
+  // Map với row index thật trong sheet (1-based), bỏ header (idx=0 = row 1)
+  return rows
+    .map((row, idx) => ({ row, sheetRow: idx + 1 }))
+    .filter(({ row, sheetRow }) => {
+      if (sheetRow === 1) return false; // bỏ header
+      const id = String(row[0] ?? '').trim();
+      return id !== '' && id !== 'ID';
+    })
+    .map(({ row, sheetRow }) => mapRow(row, sheetName, sheetRow));
 }
 
 // Đọc toàn bộ các sheets đã chọn gộp lại
@@ -113,20 +114,19 @@ function mapRow(row: unknown[], sheetName: string, rowIndex: number): TaskRow {
   const parseDate = parseSheetDate;
 
   // Cột thực tế trong sheet (0-based index):
-  // 0=A ID·formula  1=B Dự án  2=C Task  3=D Owner·formula
-  // 4=E Vai trò(multi)  5=F Chi tiết  6=G Link  7=H Status  8=I Bắt đầu  9=J Kết thúc
+  // 0=A ID  1=B Tên dự án  2=C Task  3=D Vai trò  4=E Chi tiết  5=F Link  6=G Status  7=H Bắt đầu  8=I Kết thúc
   return {
     id:           get(0) ?? `${sheetName.slice(0, 2)}${rowIndex}`,
     project:      get(1) ?? '',
     task:         get(2) ?? '',
-    owner:        get(3) ?? sheetName,
-    role:         get(4),          // E — Vai trò (multi-select, dạng "PO, DA")
-    detail:       get(5),          // F — Chi tiết
-    link:         get(6),          // G — Link
-    status:       (get(7) as TaskRow['status']) ?? 'Chuẩn bị đưa vào làm', // H
-    startDate:    parseDate(row[8]), // I — Bắt đầu
-    endDate:      parseDate(row[9]), // J — Kết thúc
-    note:         null,            // Không có cột Ghi chú trong sheet
+    owner:        sheetName,       // sheet name = tên thành viên
+    role:         get(3),          // D — Vai trò
+    detail:       get(4),          // E — Chi tiết
+    link:         get(5),          // F — Link
+    status:       (get(6) as TaskRow['status']) ?? 'Chuẩn bị đưa vào làm', // G
+    startDate:    parseDate(row[7]), // H — Bắt đầu
+    endDate:      parseDate(row[8]), // I — Kết thúc
+    note:         null,
     sourceSheet:  sheetName,
     sourceRow:    rowIndex,
     itTaskId:     null,
@@ -146,7 +146,7 @@ async function fetchColumn(
   range: string,
 ): Promise<string[]> {
   const url = `${SHEETS_API}/${spreadsheetId}/values/${encodeURIComponent(range)}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) return [];
   const json = await res.json();
   return (json.values ?? [] as unknown[][])
@@ -172,14 +172,26 @@ export async function fetchDataSystemStatuses(
   return fetchColumn(spreadsheetId, apiKey, `${sheetName}!I2:I`);
 }
 
-// Cột F — Vai trò (unique values)
+// Cột "Vai trò" — auto-detect bằng header row
 export async function fetchDataSystemRoles(
   spreadsheetId: string,
   apiKey: string,
   sheetName = 'Data System',
 ): Promise<string[]> {
-  const all = await fetchColumn(spreadsheetId, apiKey, `${sheetName}!F2:F`);
-  return [...new Set(all)]; // bỏ trùng
+  const headerUrl = `${SHEETS_API}/${spreadsheetId}/values/${encodeURIComponent(`${sheetName}!1:1`)}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
+  const headerRes = await fetch(headerUrl);
+  if (!headerRes.ok) return [];
+  const headerJson = await headerRes.json();
+  const headers: string[] = (headerJson.values?.[0] ?? []).map((h: unknown) =>
+    String(h ?? '').trim().toLowerCase()
+  );
+  const colIdx = headers.findIndex(h =>
+    h === 'vai trò' || h === 'vai tro' || h === 'role' || h === 'roles' || h === 'vai_trò'
+  );
+  if (colIdx === -1) return [];
+  const colLetter = String.fromCharCode(65 + colIdx);
+  const all = await fetchColumn(spreadsheetId, apiKey, `${sheetName}!${colLetter}2:${colLetter}`);
+  return [...new Set(all)];
 }
 
 // Cột "Thành viên" — auto-detect bằng cách đọc header row
@@ -241,7 +253,7 @@ export async function fetchITTrackerSheet(
 ): Promise<ITTaskRow[]> {
   const range = encodeURIComponent(`${sheetName}!A:K`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
@@ -335,7 +347,7 @@ export async function fetchPoolSheet(
 ): Promise<TaskRow[]> {
   const range = encodeURIComponent(`${sheetName}!A:H`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
@@ -423,7 +435,7 @@ export async function fetchReportSheet(
 ): Promise<DailyReport[]> {
   const range = encodeURIComponent(`${sheetName}!A:L`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) return [];
   const json = await res.json();
   const rows: unknown[][] = json.values ?? [];
@@ -434,20 +446,24 @@ export async function fetchReportSheet(
         const v = String(row[i] ?? '').trim();
         return v === '' ? null : v;
       };
-      const rawDate = parseSheetDate(row[4]);   // E — Ngày báo cáo (serial / dd/mm / ISO)
+      // A=ID | B=Thành viên | C=Vai trò | D=Kỳ báo cáo | E=Ngày báo cáo
+      // F=Tên Task | G=Dự án | H=Trạng thái task | I=Trạng thái tiến độ
+      // J=Đã làm gì | K=Sẽ làm gì | L=Vướng mắc
+      const rawDate = parseSheetDate(row[4]);
       return {
-        id:           get(0) ?? `R${idx + 2}`,  // A
-        member:       get(1) ?? '',              // B
-        role:         blankIfEmpty(get(2)),      // C
-        reportPeriod: normalizePeriod(get(3)),   // D — "Tuần"→"week"
-        date:         rawDate ?? new Date().toISOString().split('T')[0], // E
-        project:      get(5) ?? '',              // F
-        reportStatus: normalizeReportStatus(get(6)), // G — "Đúng tiến độ"→"on-track"
-        progress:     Number(row[7]) || 0,       // H
-        todayWork:    get(8) ?? '',              // I
-        tomorrowPlan: get(9) ?? '',              // J
-        blockers:     blankIfEmpty(get(10)),     // K — "Không có" → null
-        submittedAt:  get(11) ?? new Date().toISOString(), // L
+        id:           get(0) ?? `R${idx + 2}`,
+        member:       get(1) ?? '',
+        role:         blankIfEmpty(get(2)),
+        reportPeriod: normalizePeriod(get(3)),
+        date:         rawDate ?? new Date().toISOString().split('T')[0],
+        taskName:     get(5) ?? '',
+        project:      get(6) ?? '',
+        taskStatus:   blankIfEmpty(get(7)),
+        reportStatus: normalizeReportStatus(get(8)),
+        todayWork:    get(9) ?? '',
+        tomorrowPlan: get(10) ?? '',
+        blockers:     blankIfEmpty(get(11)),
+        submittedAt:  new Date().toISOString(),
       } satisfies DailyReport;
     });
 }
@@ -461,7 +477,7 @@ export async function fetchRoleTaskSheet(
 ): Promise<import('./types').RoleTask[]> {
   const range = encodeURIComponent(`${sheetName}!A:C`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) return [];
   const json = await res.json();
   const rows: unknown[][] = json.values ?? [];
@@ -483,7 +499,7 @@ export async function fetchDuAnSheet(
 ): Promise<TaskRow[]> {
   const range = encodeURIComponent(`${sheetName}!A:G`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
@@ -531,7 +547,7 @@ export async function fetchRoleToTaskSheet(
 ): Promise<import('./types').RoleTask[]> {
   const range = encodeURIComponent(`${sheetName}!A:C`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) return [];
   const json = await res.json();
   const rows: unknown[][] = json.values ?? [];
@@ -561,7 +577,7 @@ export async function fetchRoleToProjectSheet(
 ): Promise<RoleToProjectRow[]> {
   const range = encodeURIComponent(`${sheetName}!A:E`);
   const url = `${SHEETS_API}/${spreadsheetId}/values/${range}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`;
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) return [];
   const json = await res.json();
   const rows: unknown[][] = json.values ?? [];

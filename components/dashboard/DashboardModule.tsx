@@ -55,13 +55,28 @@ function getMonthRange(d = new Date()): [string, string] {
   ];
 }
 
-/** Báo cáo có thuộc kỳ hiện tại của tab không? */
+/** Báo cáo có thuộc kỳ hiện tại của tab không? (overlap — báo cáo tuần/tháng có thể bắt đầu trước kỳ hiện tại) */
 function coversCurrentPeriod(r: DailyReport, tab: ReportPeriod): boolean {
   if (r.reportPeriod !== tab) return false;
   const today = new Date().toISOString().split('T')[0];
   if (tab === 'day') return r.date === today;
-  if (tab === 'week') { const [f, t] = getWeekRange(); return r.date >= f && r.date <= t; }
-  const [f] = getMonthRange(); return r.date.slice(0, 7) === f.slice(0, 7);
+
+  let from: string, to: string, coverEnd: string;
+  if (tab === 'week') {
+    [from, to] = getWeekRange();
+    const d = new Date(r.date + 'T00:00:00'); d.setDate(d.getDate() + 6);
+    coverEnd = d.toISOString().split('T')[0];
+  } else {
+    [from, to] = getMonthRange();
+    const d = new Date(r.date + 'T00:00:00');
+    coverEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+  }
+  return r.date <= to && coverEnd >= from;
+}
+
+/** Quy đổi trạng thái tiến độ sang điểm số 0-100 để tính trung bình */
+function statusScore(status: ReportStatus): number {
+  return status === 'on-track' ? 100 : status === 'delayed' ? 50 : 0;
 }
 
 /** Sinh dãy ngày trong khoảng [from, to] */
@@ -134,7 +149,7 @@ export default function DashboardModule() {
   const reportedPeriod = useMemo(() => new Set(periodReports.map(r => r.member)), [periodReports]);
   const avgProgress    = useMemo(() => {
     if (!periodReports.length) return 0;
-    return Math.round(periodReports.reduce((s, r) => s + r.progress, 0) / periodReports.length);
+    return Math.round(periodReports.reduce((s, r) => s + statusScore(r.reportStatus), 0) / periodReports.length);
   }, [periodReports]);
   const needSupport    = periodReports.filter(r => r.reportStatus === 'need-support').length;
   const delayed        = periodReports.filter(r => r.reportStatus === 'delayed').length;
@@ -199,7 +214,7 @@ export default function DashboardModule() {
     members.map(m => {
       const mReports = periodReports.filter(r => r.member === m.name);
       const avg = mReports.length
-        ? Math.round(mReports.reduce((s, r) => s + r.progress, 0) / mReports.length) : 0;
+        ? Math.round(mReports.reduce((s, r) => s + statusScore(r.reportStatus), 0) / mReports.length) : 0;
       const latest = [...mReports].sort((a, b) => b.date.localeCompare(a.date))[0] ?? null;
       return { name: m.name, avg, count: mReports.length, latest };
     })
@@ -223,7 +238,7 @@ export default function DashboardModule() {
     periodReports.forEach(r => {
       if (!map[r.project]) map[r.project] = { count: 0, total: 0 };
       map[r.project].count++;
-      map[r.project].total += r.progress;
+      map[r.project].total += statusScore(r.reportStatus);
     });
     return Object.entries(map)
       .map(([project, v]) => ({ project, count: v.count, avgProgress: Math.round(v.total / v.count) }))

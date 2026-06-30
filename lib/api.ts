@@ -1,5 +1,4 @@
 import { ALL_STATUSES } from './config';
-import { MOCK_TASKS, MOCK_IT_TASKS, MOCK_POOL_TASKS, MOCK_DASHBOARD, MOCK_ROLE_TASKS } from './mock-data';
 import {
   loadSheetsConfig,
   fetchAllITTrackerSheets,
@@ -11,23 +10,9 @@ import {
 } from './google-sheets';
 import type { TaskRow, ITTaskRow, DashboardData, DailyReport, RoleTask } from './types';
 
-// ─── Mock fallback ────────────────────────────────────────────────────────────
-
-function getMockData<T>(action: string, params?: Record<string, string>): T {
-  switch (action) {
-    case 'getOverview':  return MOCK_TASKS as T;
-    case 'getMyTasks':   return MOCK_TASKS.filter(t => t.owner === params?.member) as T;
-    case 'getDashboard': return MOCK_DASHBOARD as T;
-    case 'getProjects':  return [...new Set(MOCK_TASKS.map(t => t.project))].map((p, i) => ({ id: String(i), name: p })) as T;
-    case 'getMembers':   return [...new Set(MOCK_TASKS.map(t => t.owner))].map((m, i) => ({ id: String(i), name: m })) as T;
-    case 'getStatuses':  return ALL_STATUSES as T;
-    case 'getRoles':     return ['PO', 'DA', 'PMC', 'PD'] as T;
-    default:             return [] as T;
-  }
-}
-
-async function apiFetch<T>(action: string, params?: Record<string, string>): Promise<T> {
-  return getMockData<T>(action, params);
+async function apiFetch<T>(action: string): Promise<T> {
+  if (action === 'getStatuses') return ALL_STATUSES as T;
+  return [] as T;
 }
 
 // ─── Write via /api/sheets (proxy → Apps Script) ─────────────────────────────
@@ -76,18 +61,18 @@ export async function getPoolTasksFromSheet(): Promise<TaskRow[]> {
     const assignments = await fetchRoleToProjectSheet(cfg.spreadsheetId, cfg.apiKey, r2pSheet);
     return mergeProjectAssignments(projects, assignments);
   } catch {
-    return MOCK_POOL_TASKS;
+    return [];
   }
 }
 
 export async function getRoleTasksFromSheet(): Promise<RoleTask[]> {
   const cfg = loadSheetsConfig();
   const sheetName = cfg?.roleToTaskSheet || cfg?.roleTaskSheet;
-  if (!cfg?.spreadsheetId || !cfg?.apiKey || !sheetName) return MOCK_ROLE_TASKS;
+  if (!cfg?.spreadsheetId || !cfg?.apiKey || !sheetName) return [];
   try {
     return await fetchRoleToTaskSheet(cfg.spreadsheetId, cfg.apiKey, sheetName);
   } catch {
-    return MOCK_ROLE_TASKS;
+    return [];
   }
 }
 
@@ -96,12 +81,12 @@ export async function getITTasksFromSheet(): Promise<ITTaskRow[]> {
   const sheets = cfg?.itTrackerSheets?.length
     ? cfg.itTrackerSheets
     : cfg?.itTrackerSheet ? [cfg.itTrackerSheet] : null;
-  if (!sheets) return MOCK_IT_TASKS;
+  if (!sheets) return [];
   const spreadsheetId = cfg?.itTrackerSpreadsheetId || cfg?.spreadsheetId;
   const apiKey        = cfg?.itTrackerApiKey        || cfg?.apiKey;
-  if (!spreadsheetId || !apiKey) return MOCK_IT_TASKS;
+  if (!spreadsheetId || !apiKey) return [];
   try { return await fetchAllITTrackerSheets(spreadsheetId, apiKey, sheets); }
-  catch { return MOCK_IT_TASKS; }
+  catch { return []; }
 }
 
 export async function getReportsFromSheet(): Promise<DailyReport[]> {
@@ -116,11 +101,9 @@ export async function getReportsFromSheet(): Promise<DailyReport[]> {
 
 export const api = {
   // ── Read ──────────────────────────────────────────────────────────────────
-  getOverview:  (params?: { week?: string }) =>
-    apiFetch<TaskRow[]>('getOverview', params as Record<string, string>),
+  getOverview:  () => apiFetch<TaskRow[]>('getOverview'),
 
-  getMyTasks:   (member: string) =>
-    apiFetch<TaskRow[]>('getMyTasks', { member }),
+  getMyTasks:   () => apiFetch<TaskRow[]>('getMyTasks'),
 
   getITTasks:   () => getITTasksFromSheet(),
   getPoolTasks: () => getPoolTasksFromSheet(),
@@ -148,8 +131,22 @@ export const api = {
   addTask:          (data: Partial<TaskRow>) =>
     sheetsPost<TaskRow>({ action: 'addTask', ...data as Record<string, unknown> }),
 
-  updateTask:       (data: Partial<TaskRow> & { id: string }) =>
-    sheetsPost<{ updated: boolean }>({ action: 'updateTask', ...data as Record<string, unknown> }),
+  updateTask: (data: Partial<TaskRow> & { id: string }) =>
+    sheetsPost<{ updated: boolean }>({
+      action:    'updateMyTask',
+      member:    data.sourceSheet ?? data.owner ?? '',
+      rowIndex:  data.sourceRow   ?? 0,
+      taskId:    data.id,
+      taskName:  data.task ?? '',
+      fields: {
+        status:    data.status    ?? undefined,
+        role:      data.role      ?? undefined,
+        detail:    data.detail    ?? undefined,
+        link:      data.link      ?? undefined,
+        startDate: data.startDate ?? undefined,
+        endDate:   data.endDate   ?? undefined,
+      },
+    }),
 
   updateTaskStatus: (id: string, status: string, note?: string) =>
     sheetsPost<{ updated: boolean }>({ action: 'updateTaskStatus', id, status, ...(note ? { note } : {}) }),
@@ -171,6 +168,9 @@ export const api = {
   deleteReport: (id: string, reportSheet?: string) =>
     sheetsPost<{ deleted: boolean }>({ action: 'deleteReport', id, ...(reportSheet ? { reportSheet } : {}) }),
 
+  deleteMyTask: (member: string, taskId: string, taskName: string) =>
+    sheetsPost<{ deleted: boolean }>({ action: 'deleteMyTask', member, taskId, taskName }),
+
   // ── Pool Task (Dự án sheet) ───────────────────────────────────────────────
   /**
    * Thêm dự án mới vào "Dự án" sheet
@@ -179,43 +179,78 @@ export const api = {
   addPoolTask: (data: Partial<TaskRow>) => {
     const cfg = loadSheetsConfig();
     const duAnSheet = cfg?.duAnSheet || cfg?.poolSheet || 'Dự án';
+
+    // F: xóa [...] trước, rồi split theo ";" để lấy tên (tránh ";" bên trong brackets)
+    const membersForSheet = data.role
+      ? data.role.replace(/\[[^\]]*\]/g, '').split(/;\s*/).map(p => p.trim()).filter(Boolean).join(', ')
+      : '';
+
+    // G: chuyển YYYY-MM-DD → DD/MM/YYYY cho đúng format sheet
+    const deadlineForSheet = data.endDate
+      ? (() => {
+          const d = new Date(data.endDate + 'T00:00:00');
+          return isNaN(d.getTime()) ? data.endDate :
+            `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+        })()
+      : '';
+
     const row = [
       data.id ?? '',
       data.project ?? '',
       data.status ?? 'In Progress',
       data.task ?? 'Task',
       data.owner ?? '',
-      data.role ?? '',
-      data.endDate ?? '',
+      membersForSheet,
+      deadlineForSheet,
     ];
+    console.log('[addPoolTask] row:', JSON.stringify(row));
     return sheetsPost<{ success: boolean }>({ action: 'appendDuAn', duAnSheet, row });
   },
 
   /**
-   * Cập nhật dự án trong "Dự án" sheet (theo sourceRow)
+   * Cập nhật dự án: tìm theo ID, ghi lại Dự án sheet + Role to Project + member sheets
    */
-  updatePoolTask: (data: Partial<TaskRow> & { id: string }) => {
+  updatePoolTask: (data: Partial<TaskRow> & { id: string }, assignments?: Array<{ member: string; role: string; tasks: string }>) => {
     const cfg = loadSheetsConfig();
-    const duAnSheet = cfg?.duAnSheet || cfg?.poolSheet || 'Dự án';
-    const values = [
-      data.id ?? '',
-      data.project ?? '',
-      data.status ?? '',
-      data.task ?? '',
-      data.owner ?? '',
-      data.role ?? '',
-      data.endDate ?? '',
-    ];
-    return sheetsPost<{ success: boolean }>({
-      action: 'updateDuAn',
+    const duAnSheet          = cfg?.duAnSheet          || cfg?.poolSheet        || 'Dự án';
+    const roleToProjectSheet = cfg?.roleToProjectSheet || 'Role to Project';
+
+    // F: tên thành viên (comma-separated, bỏ [...])
+    const membersForSheet = data.role
+      ? data.role.replace(/\[[^\]]*\]/g, '').split(/;\s*/).map(p => p.trim()).filter(Boolean).join(', ')
+      : '';
+
+    // G: DD/MM/YYYY
+    const deadlineForSheet = data.endDate
+      ? (() => {
+          const d = new Date(data.endDate + 'T00:00:00');
+          return isNaN(d.getTime()) ? data.endDate :
+            `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+        })()
+      : '';
+
+    const row = [data.id, data.project ?? '', data.status ?? '', data.task ?? 'Task', data.owner ?? '', membersForSheet, deadlineForSheet];
+
+    // Build assignments cho Role to Project + member sheets
+    const r2pAssignments = (assignments ?? []).map(a => ({
+      projectId:   data.id,
+      projectName: data.project ?? '',
+      member:      a.member,
+      role:        a.role,
+      tasks:       a.tasks ? a.tasks.split('; ').filter(Boolean) : [],
+    }));
+
+    return sheetsPost<{ updated: boolean }>({
+      action: 'updateProjectFull',
       duAnSheet,
-      rowIndex: data.sourceRow ?? 2,
-      values,
+      roleToProjectSheet,
+      row,
+      assignments: r2pAssignments,
     });
   },
 
   deletePoolTask: (id: string) =>
-    sheetsPost<{ deleted: boolean }>({ action: 'deletePoolTask', id }),
+    sheetsPost<{ deleted: boolean }>({ action: 'deletePoolFull', id }),
 
   /**
    * Owner pick → ghi assignments vào "Role to Project" cho TẤT CẢ thành viên.

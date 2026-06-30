@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
 import { api } from '@/lib/api';
-import { MOCK_IT_TASKS } from '@/lib/mock-data';
 import { loadSheetsConfig } from '@/lib/google-sheets';
 import type { ITTaskRow } from '@/lib/types';
 
@@ -99,12 +98,12 @@ export default function ITTrackerModule() {
     api.getITTasks()
       .then(data => {
         const hasSheet = !!(config?.itTrackerSheets?.length || config?.itTrackerSheet);
-        setAllTasks(data && data.length > 0 ? data : MOCK_IT_TASKS);
+        setAllTasks(data ?? []);
         setIsFromSheet(hasSheet && data.length > 0);
         setLastSync(new Date());
       })
       .catch(() => {
-        setAllTasks(MOCK_IT_TASKS);
+        setAllTasks([]);
         setIsFromSheet(false);
       })
       .finally(() => {

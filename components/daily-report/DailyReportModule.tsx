@@ -9,7 +9,8 @@ import { api, getReportsFromSheet } from '@/lib/api';
 import { loadSheetsConfig } from '@/lib/google-sheets';
 import MemberAvatar from '@/components/MemberAvatar';
 import ReportForm from './ReportForm';
-import type { DailyReport, ReportStatus } from '@/lib/types';
+import { useToast, ToastContainer } from '@/components/ui/Toast';
+import type { DailyReport, ReportStatus, ReportPeriod } from '@/lib/types';
 
 // ─── Date range helpers ────────────────────────────────────────────────────────
 type DateRangeMode = 'day' | 'week' | 'month' | 'custom';
@@ -86,8 +87,6 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-import type { ReportPeriod } from '@/lib/types';
-
 // Week number từ ngày
 function getISOWeek(dateStr: string): number {
   const d = new Date(dateStr + 'T00:00:00');
@@ -152,6 +151,13 @@ export function coversToday(r: DailyReport, today: string): boolean {
 function groupKey(r: DailyReport) { return `${r.reportPeriod}::${r.date}`; }
 function groupLabel(r: DailyReport) { return formatPeriodHeader(r.date, r.reportPeriod); }
 
+// ─── Accent bar color theo trạng thái ────────────────────────────────────────
+const STATUS_ACCENT: Record<ReportStatus, string> = {
+  'on-track':     'bg-green-500',
+  'delayed':      'bg-amber-400',
+  'need-support': 'bg-red-500',
+};
+
 // ─── Card báo cáo ─────────────────────────────────────────────────────────────
 function ReportCard({ report, canEdit, onEdit, onDelete }: {
   report: DailyReport;
@@ -160,75 +166,76 @@ function ReportCard({ report, canEdit, onEdit, onDelete }: {
   onDelete?: (r: DailyReport) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const cfg = STATUS_CFG[report.reportStatus];
+  const period = report.reportPeriod ?? 'day';
 
   return (
-    <div className={`rounded-xl border bg-white overflow-hidden transition-shadow hover:shadow-sm ${
-      report.reportStatus === 'need-support' ? 'border-red-200' :
-      report.reportStatus === 'delayed' ? 'border-amber-200' : 'border-gray-200'
-    }`}>
-      {/* Card header */}
-      <div className="px-4 py-3 flex items-start gap-3">
+    <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+      {/* Accent bar */}
+      <div className={`h-1 w-full ${STATUS_ACCENT[report.reportStatus]}`} />
+
+      {/* Header */}
+      <div className="px-4 pt-3 pb-2 flex items-start gap-3">
         <MemberAvatar name={report.member} size="md" />
-        <div className="flex-1 min-w-0">
+
+        <div className="flex-1 min-w-0 space-y-1">
+          {/* Row 1: name + role + period */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-gray-900 text-sm">{report.member}</span>
             {report.role && report.role.split(',').map(r => r.trim()).filter(Boolean).map(r => (
-              <span key={r} className="px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full text-[11px] font-semibold">
-                {r}
-              </span>
+              <span key={r} className="px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded text-[11px] font-semibold">{r}</span>
             ))}
-            <span className="text-xs text-gray-400">·</span>
-            <span className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full truncate max-w-[200px]">
+            <span className="ml-auto shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 text-gray-500">
+              {PERIOD_BADGE[period]}
+            </span>
+          </div>
+
+          {/* Row 2: task name (nổi bật) */}
+          {report.taskName && (
+            <p className="text-sm font-semibold text-gray-800 truncate leading-snug">{report.taskName}</p>
+          )}
+
+          {/* Row 3: project + task status + progress status */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full font-medium truncate max-w-[160px]">
               {report.project}
             </span>
+            {report.taskStatus && (
+              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{report.taskStatus}</span>
+            )}
             <StatusBadge status={report.reportStatus} />
           </div>
-          <div className="mt-1.5">
-            <ProgressBar value={report.progress} />
-          </div>
         </div>
-        {/* Period badge */}
-        <span className="shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">
-          {PERIOD_BADGE[report.reportPeriod ?? 'day']}
-        </span>
-        <div className="flex items-center gap-1 shrink-0 ml-1">
+
+        {/* Actions */}
+        <div className="flex items-center gap-0.5 shrink-0 -mt-0.5">
           {canEdit && (
-            <button
-              onClick={() => onEdit(report)}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-              title="Chỉnh sửa"
-            >
-              <Edit2 size={14} />
+            <button onClick={() => onEdit(report)}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Chỉnh sửa">
+              <Edit2 size={13} />
             </button>
           )}
           {canEdit && onDelete && (
-            <button
-              onClick={() => onDelete(report)}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-              title="Xóa báo cáo"
-            >
-              <Trash2 size={14} />
+            <button onClick={() => onDelete(report)}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Xóa">
+              <Trash2 size={13} />
             </button>
           )}
-          <button
-            onClick={() => setExpanded(v => !v)}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-          >
-            <ChevronDown size={15} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          <button onClick={() => setExpanded(v => !v)}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+            <ChevronDown size={14} className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* Summary line (collapsed) */}
+      {/* Collapsed preview */}
       {!expanded && (
-        <div className="px-4 pb-3">
-          <p className="text-xs text-gray-500 line-clamp-2">
-            <span className="font-medium text-gray-700">✅ </span>{report.todayWork}
+        <div className="px-4 pb-3 pt-1 border-t border-gray-50">
+          <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+            <span className="font-medium text-gray-600">Đã làm: </span>{report.todayWork || <span className="italic text-gray-400">Chưa điền</span>}
           </p>
           {report.blockers && (
-            <p className="text-xs text-amber-700 mt-0.5 line-clamp-1">
-              <span className="font-medium">⚠️ </span>{report.blockers}
+            <p className="text-xs text-amber-700 mt-1 line-clamp-1 flex items-center gap-1">
+              <AlertCircle size={11} className="shrink-0" />{report.blockers}
             </p>
           )}
         </div>
@@ -236,30 +243,37 @@ function ReportCard({ report, canEdit, onEdit, onDelete }: {
 
       {/* Expanded detail */}
       {expanded && (
-        <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
-          <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-              ✅ {PERIOD_DONE_LABEL[report.reportPeriod ?? 'day']}
+        <div className="border-t border-gray-100 divide-y divide-gray-50">
+          {/* Đã làm */}
+          <div className="px-4 py-3">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+              ✅ {PERIOD_DONE_LABEL[period]}
             </p>
             <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{report.todayWork}</p>
           </div>
+
+          {/* Sẽ làm */}
           {report.tomorrowPlan && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-                📋 {PERIOD_NEXT_LABEL[report.reportPeriod ?? 'day']}
+            <div className="px-4 py-3">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+                📋 {PERIOD_NEXT_LABEL[period]}
               </p>
               <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{report.tomorrowPlan}</p>
             </div>
           )}
+
+          {/* Vướng mắc */}
           {report.blockers && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">⚠️ Vướng mắc / Blockers</p>
-              <p className="text-sm text-amber-800 whitespace-pre-line leading-relaxed">{report.blockers}</p>
+            <div className="px-4 py-3">
+              <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <AlertCircle size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider mb-1">Vướng mắc / Blockers</p>
+                  <p className="text-sm text-amber-800 whitespace-pre-line leading-relaxed">{report.blockers}</p>
+                </div>
+              </div>
             </div>
           )}
-          <p className="text-xs text-gray-400">
-            Gửi lúc {new Date(report.submittedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-          </p>
         </div>
       )}
     </div>
@@ -269,6 +283,7 @@ function ReportCard({ report, canEdit, onEdit, onDelete }: {
 // ─── Module chính ─────────────────────────────────────────────────────────────
 export default function DailyReportModule() {
   const { members } = useDataSystem();
+  const { toasts, push: pushToast, dismiss } = useToast();
   const [reports, setReports]       = useState<DailyReport[]>([]);
   const [loading, setLoading]       = useState(false);
   const [selectedMember, setSelectedMember] = useState('');
@@ -375,13 +390,13 @@ export default function DailyReportModule() {
 
   async function handleDelete(report: DailyReport) {
     if (!confirm(`Xóa báo cáo của ${report.member} ngày ${report.date}?`)) return;
-    // Optimistic remove
     setReports(prev => prev.filter(r => r.id !== report.id));
     try {
       await api.deleteReport(report.id, reportSheet);
+      pushToast('success', 'Đã xóa báo cáo', `${report.member} · ${report.date}`);
     } catch {
-      // Rollback nếu lỗi
       setReports(prev => [report, ...prev]);
+      pushToast('error', 'Xóa thất bại', 'Không thể xóa báo cáo khỏi sheet');
     }
   }
 
@@ -680,6 +695,8 @@ export default function DailyReportModule() {
           onSave={report => { handleSave(report); setShowForm(false); setEditingReport(null); }}
         />
       )}
+
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }

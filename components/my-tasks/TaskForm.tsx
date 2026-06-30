@@ -1,9 +1,10 @@
 'use client';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { X, CheckCircle, ChevronDown } from 'lucide-react';
 import { api } from '@/lib/api';
 import { loadSheetsConfig } from '@/lib/google-sheets';
 import { useDataSystem } from '@/lib/use-data-system';
+import { getPoolTasksFromSheet } from '@/lib/api';
 import Combobox from '@/components/Combobox';
 import MemberAvatar from '@/components/MemberAvatar';
 import type { TaskRow } from '@/lib/types';
@@ -31,7 +32,14 @@ function joinRoles(roles: string[]): string {
 }
 
 export default function TaskForm({ task, owner, lockOwner = false, onClose, onSave, title }: Props) {
-  const { projects, statuses, roles, members, loading: dsLoading } = useDataSystem();
+  const { statuses, roles, members, loading: dsLoading } = useDataSystem();
+  const [poolProjects, setPoolProjects] = useState<string[]>([]);
+  useEffect(() => {
+    getPoolTasksFromSheet().then(tasks => {
+      const names = [...new Set(tasks.map(t => t.project).filter(Boolean))];
+      setPoolProjects(names);
+    }).catch(() => {});
+  }, []);
   const [form, setForm] = useState({
     project:   task?.project   ?? '',
     task:      task?.task      ?? '',
@@ -178,7 +186,7 @@ export default function TaskForm({ task, owner, lockOwner = false, onClose, onSa
             <Combobox
               value={form.project}
               onChange={v => set('project', v)}
-              options={projects}
+              options={poolProjects}
               placeholder="Chọn hoặc nhập dự án..."
               allowFreeText={true}
               loading={dsLoading}

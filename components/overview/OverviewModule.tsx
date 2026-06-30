@@ -59,19 +59,28 @@ function formatPeriodHeader(dateStr: string, period: ReportPeriod): string {
   return d.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
 }
 
-/** Báo cáo có thuộc kỳ hiện tại của tab không? */
+/** Quy đổi trạng thái tiến độ sang điểm số 0-100 để hiển thị thanh tiến độ */
+function statusScore(status: ReportStatus): number {
+  return status === 'on-track' ? 100 : status === 'delayed' ? 50 : 0;
+}
+
+/** Báo cáo có thuộc kỳ hiện tại của tab không? (overlap — báo cáo tuần/tháng có thể bắt đầu trước kỳ hiện tại) */
 function coversCurrentPeriod(r: DailyReport, tab: ReportPeriod): boolean {
   if (r.reportPeriod !== tab) return false;
   const today = new Date().toISOString().split('T')[0];
   if (tab === 'day') return r.date === today;
+
+  let from: string, to: string, coverEnd: string;
   if (tab === 'week') {
-    const [wFrom, wTo] = getWeekRange();
-    // Chấp nhận cả báo cáo có date trong khoảng của tuần hiện tại
-    return r.date >= wFrom && r.date <= wTo;
+    [from, to] = getWeekRange();
+    const d = new Date(r.date + 'T00:00:00'); d.setDate(d.getDate() + 6);
+    coverEnd = d.toISOString().split('T')[0];
+  } else {
+    [from, to] = getMonthRange();
+    const d = new Date(r.date + 'T00:00:00');
+    coverEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
   }
-  // month
-  const [mFrom] = getMonthRange();
-  return r.date.slice(0, 7) === mFrom.slice(0, 7);
+  return r.date <= to && coverEnd >= from;
 }
 
 function StatusBadge({ status }: { status: ReportStatus }) {
@@ -118,7 +127,7 @@ function MiniReportCard({ report }: { report: DailyReport }) {
             <StatusBadge status={report.reportStatus} />
           </div>
           <div className="mt-1.5">
-            <ProgressBar value={report.progress} />
+            <ProgressBar value={statusScore(report.reportStatus)} />
           </div>
         </div>
         <button
@@ -348,7 +357,7 @@ export default function OverviewModule() {
                 {hasReport && mReport ? (
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="w-24 hidden sm:block">
-                      <ProgressBar value={mReport.progress} />
+                      <ProgressBar value={statusScore(mReport.reportStatus)} />
                     </div>
                     <StatusBadge status={mReport.reportStatus} />
                   </div>

@@ -88,14 +88,15 @@ export interface DailyReport {
   date: string;              // YYYY-MM-DD (luôn là ngày đầu kỳ: thứ Hai / ngày 1 tháng)
   reportPeriod: ReportPeriod;
   member: string;
-  role: string | null;       // Vai trò trong dự án: "PO", "DA, PMC", v.v.
-  project: string;
-  progress: number;          // 0-100
-  reportStatus: ReportStatus;
-  todayWork: string;         // "kỳ này đã làm gì"
-  tomorrowPlan: string;      // "kỳ tới sẽ làm gì"
-  blockers: string | null;
-  submittedAt: string;       // ISO timestamp
+  role: string | null;       // C — Vai trò: "PO", "DA, PMC", v.v.
+  taskName: string;          // F — Tên Task
+  project: string;           // G — Dự án
+  taskStatus: string | null; // H — Trạng thái task (Done / In Progress …)
+  reportStatus: ReportStatus;// I — Trạng thái tiến độ
+  todayWork: string;         // J — Đã làm gì
+  tomorrowPlan: string;      // K — Sẽ làm gì
+  blockers: string | null;   // L — Vướng mắc / Blockers
+  submittedAt: string;       // ISO timestamp (không ghi ra sheet)
 }
 
 export interface ApiResponse<T> {

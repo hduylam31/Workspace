@@ -3,13 +3,14 @@ import { useState, useMemo, useEffect } from 'react';
 import {
   Search, CheckSquare, Square, ChevronDown, X,
   ClipboardList, UserCheck, Loader2, Plus, ArrowLeft,
-  List, CheckCircle2, AlertTriangle, Calendar, ExternalLink, Eye, Pencil, Save,
+  List, CheckCircle2, AlertTriangle, Calendar, ExternalLink, Eye, Pencil, Save, Trash2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useDataSystem } from '@/lib/use-data-system';
 import { loadSheetsConfig } from '@/lib/google-sheets';
 import { useSheetsData } from '@/lib/sheets-context';
 import MemberAvatar from '@/components/MemberAvatar';
+import { useToast, ToastContainer } from '@/components/ui/Toast';
 import type { TaskRow, RoleTask } from '@/lib/types';
 
 type PickedMap   = Record<string, string>;   // taskId → ownerName
@@ -306,6 +307,22 @@ function AddPoolTaskForm({ onClose, onSave }: { onClose: () => void; onSave: (da
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!projectName.trim()) return;
+
+    // Validate: owner phải chọn ít nhất 1 task nếu đã có role
+    if (owner && ownerRoles.length > 0 && ownerTasks.length === 0) {
+      alert(`Owner "${owner}" chưa chọn đầu việc. Vui lòng chọn ít nhất 1 task.`);
+      return;
+    }
+    // Validate: từng thành viên phải có ít nhất 1 task nếu đã có role
+    for (const name of otherMembers) {
+      const roles = memberRoles[name] ?? [];
+      const tasks = memberTasks[name] ?? [];
+      if (roles.length > 0 && tasks.length === 0) {
+        alert(`"${name}" chưa chọn đầu việc. Vui lòng chọn ít nhất 1 task.`);
+        return;
+      }
+    }
+
     const memberStr = otherMembers.length > 0
       ? encodeMemberRoles(otherMembers.map(name => ({ name, roles: memberRoles[name] ?? [], tasks: memberTasks[name] ?? [] })))
       : null;
@@ -497,7 +514,7 @@ function TaskDetailModal({
 }: {
   task: TaskRow;
   onClose: () => void;
-  onUpdate?: (updated: TaskRow) => void;
+  onUpdate?: (updated: TaskRow, hasPick: boolean) => void;
 }) {
   const { members: allMembers, roles: allRoles, projectStatuses } = useDataSystem();
   const availableRoles    = allRoles.length ? allRoles : ['PO', 'DA', 'Dev', 'QC', 'PMC', 'PD', 'BA'];
@@ -570,6 +587,22 @@ function TaskDetailModal({
 
   async function handleSave() {
     if (!projectName.trim()) return;
+
+    // Validate: owner phải chọn ít nhất 1 task nếu đã có role
+    if (owner && ownerRoles.length > 0 && ownerTasks.length === 0) {
+      alert(`Owner "${owner}" chưa chọn đầu việc. Vui lòng chọn ít nhất 1 task.`);
+      return;
+    }
+    // Validate: từng thành viên phải có ít nhất 1 task nếu đã có role
+    for (const name of otherMembers) {
+      const roles = memberRoles[name] ?? [];
+      const tasks = memberTasks[name] ?? [];
+      if (roles.length > 0 && tasks.length === 0) {
+        alert(`"${name}" chưa chọn đầu việc. Vui lòng chọn ít nhất 1 task.`);
+        return;
+      }
+    }
+
     setSaving(true);
     const memberStr = otherMembers.length > 0
       ? encodeMemberRoles(otherMembers.map(n => ({ name: n, roles: memberRoles[n] ?? [], tasks: memberTasks[n] ?? [] })))
@@ -586,12 +619,24 @@ function TaskDetailModal({
       link:     link.trim() || null,
       note:     noteText.trim() || null,
     };
+    // Build assignments cho Role to Project + member sheets
+    const assignments: Array<{ member: string; role: string; tasks: string }> = [];
+    if (owner && ownerRoles.length > 0) {
+      assignments.push({ member: owner, role: ownerRoles.join(', '), tasks: ownerTasks.join('; ') });
+    }
+    for (const name of otherMembers) {
+      const roles = memberRoles[name] ?? [];
+      const tasks = memberTasks[name] ?? [];
+      if (roles.length > 0) assignments.push({ member: name, role: roles.join(', '), tasks: tasks.join('; ') });
+    }
+
     try {
-      onUpdate?.(updated);
+      await api.updatePoolTask(updated, assignments);
+      onUpdate?.(updated, assignments.length > 0);
       setIsEditing(false);
-    } catch {
-      onUpdate?.(updated);
-      setIsEditing(false);
+      onClose(); // đóng modal để thấy list ngay
+    } catch (err) {
+      alert('Lỗi lưu: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setSaving(false);
     }
@@ -1019,6 +1064,7 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
   const [confirmError, setConfirmError] = useState('');
   const [detailTask,   setDetailTask]   = useState<TaskRow | null>(null);
   const [hoveredRow,   setHoveredRow]   = useState<string | null>(null);
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToast(8000);
 
   const config = typeof window !== 'undefined' ? loadSheetsConfig() : null;
   const { members } = useDataSystem();
@@ -1131,7 +1177,19 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
 
   function closeConfirm() { setConfirmState('idle'); setConfirmTasks([]); setConfirmError(''); }
 
-  function handleAddTask(data: Partial<TaskRow>) {
+  async function handleDeletePool(task: TaskRow) {
+    if (!confirm(`Xóa dự án "${task.project}"?\nThao tác này sẽ xóa luôn Role to Project và task trong sheet thành viên.`)) return;
+    setPoolTasks(prev => prev.filter(t => t.id !== task.id));
+    try {
+      await api.deletePoolTask(task.id);
+      pushToast('success', 'Đã xóa dự án', task.project);
+    } catch {
+      setPoolTasks(prev => [task, ...prev]);
+      pushToast('error', 'Xóa thất bại', 'Không thể xóa dự án khỏi sheet');
+    }
+  }
+
+  async function handleAddTask(data: Partial<TaskRow>) {
     const newTask: TaskRow = {
       id:           `POOL${Date.now()}`,
       project:      data.project  ?? '',
@@ -1149,9 +1207,76 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
       itTaskId:     null,
       lastModified: new Date().toISOString(),
     };
+
+    // Cập nhật UI trước
     setPoolTasks(prev => [newTask, ...prev]);
-    if (newTask.owner) setPickedBy(prev => ({ ...prev, [newTask.id]: newTask.owner }));
     setShowAddForm(false);
+
+    const cfg = loadSheetsConfig();
+    const hasScriptUrl = !!cfg?.appsScriptUrl;
+    pushToast('info',
+      hasScriptUrl ? '📡 Đang ghi xuống Google Sheet...' : '⚠️ Chưa có Apps Script URL — chỉ lưu UI',
+      hasScriptUrl ? `URL: ${cfg!.appsScriptUrl!.slice(0, 60)}...` : 'Vào Settings → điền Apps Script URL để ghi thật'
+    );
+
+    try {
+      // 1. Ghi vào sheet "Dự án"
+      const membersPreview = newTask.role
+        ? newTask.role.replace(/\[[^\]]*\]/g, '').split(/;\s*/).map((p: string) => p.trim()).filter(Boolean).join(', ')
+        : '(chưa chọn thành viên)';
+      pushToast('info', '📤 Data gửi lên sheet "Dự án"',
+        `F(Thành viên): "${membersPreview}" | G(Deadline): "${newTask.endDate ?? '(trống)'}"`
+      );
+      await api.addPoolTask(newTask);
+      pushToast('success', '✅ Đã ghi vào sheet "Dự án"', `ID: ${newTask.id} · ${newTask.project}`);
+
+      // 2. Ghi vào Role to Project + sheet thành viên nếu có role
+      //    (kể cả khi chưa chọn đầu việc cụ thể)
+      const ownerInfo  = parseOwnerDetail(data.detail ?? null);
+      const memberList = parseMemberRoles(data.role ?? null);
+
+      const assignments: Array<{ member: string; role: string; tasks: string }> = [
+        // Owner — luôn ghi vào sheet của họ
+        ...(newTask.owner ? [{
+          member: newTask.owner,
+          role:   ownerInfo.roles.join(', '),
+          tasks:  ownerInfo.tasks.join('; '),
+        }] : []),
+        // Thành viên khác
+        ...memberList
+          .filter(m => m.name)
+          .map(m => ({
+            member: m.name,
+            role:   m.roles.join(', '),
+            tasks:  m.tasks.join('; '),
+          })),
+      ].filter(a => a.member.trim() !== '');
+
+      pushToast('info',
+        `📋 Tìm thấy ${assignments.length} thành viên cần ghi`,
+        assignments.length > 0
+          ? assignments.map(a => `${a.member}(${a.role || 'chưa có role'})`).join(', ')
+          : 'Owner chưa chọn vai trò — không ghi Role to Project'
+      );
+
+      if (assignments.length > 0) {
+        setPickedBy(prev => ({ ...prev, [newTask.id]: newTask.owner }));
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pickResult = await api.pickPoolTask(newTask.id, newTask.owner, undefined, newTask.project, assignments) as any;
+        const errs: string[] = pickResult?.errors ?? [];
+        if (errs.length > 0) {
+          pushToast('error', '⚠️ Lỗi ghi sheet thành viên', errs.join(' | '));
+        } else {
+          pushToast('success', '✅ Đã ghi vào Role to Project + sheet thành viên',
+            `r2p: ${pickResult?.r2pRows ?? 0} rows · tasks: ${pickResult?.taskRows ?? 0} rows · ${(pickResult?.writtenMembers ?? []).join(', ')}`
+          );
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      pushToast('error', '❌ Lỗi khi ghi xuống sheet', msg);
+      console.error('[PickTask] handleAddTask failed:', err);
+    }
   }
 
   if (loadingTasks) return (
@@ -1162,6 +1287,7 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
 
   return (
     <div className="space-y-4">
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       {/* Sheet status */}
       <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${
         isFromSheet ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-gray-50 border-gray-200 text-gray-500'
@@ -1313,7 +1439,7 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
                     onClick={() => !isPicked && toggle(task.id)}
                     onMouseEnter={() => setHoveredRow(task.id)}
                     onMouseLeave={() => setHoveredRow(null)}
-                    className={`transition-colors ${
+                    className={`group transition-colors ${
                       isPicked   ? 'bg-gray-50 opacity-70' :
                       isSelected ? 'bg-green-50 cursor-pointer' :
                       isHovered  ? 'bg-gray-50 cursor-pointer' :
@@ -1406,6 +1532,17 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
                         </span>
                       ) : <span className="text-gray-300 text-xs">—</span>}
                     </td>
+
+                    {/* Xóa */}
+                    <td className="px-2 py-3 text-right">
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDeletePool(task); }}
+                        className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                        title="Xóa dự án"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -1467,9 +1604,12 @@ function PickBoard({ member, onBack }: { member: string; onBack: () => void }) {
         <TaskDetailModal
           task={detailTask}
           onClose={() => setDetailTask(null)}
-          onUpdate={updated => {
+          onUpdate={(updated, hasPick) => {
             setPoolTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
             setDetailTask(updated);
+            if (hasPick && updated.owner) {
+              setPickedBy(prev => ({ ...prev, [updated.id]: updated.owner! }));
+            }
           }}
         />
       )}

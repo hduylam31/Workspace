@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, ChevronDown, ChevronUp, ExternalLink, Edit2, RefreshCw } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, ExternalLink, Edit2, RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { nameToMemberItem } from '@/lib/config';
 import { useMemberColors } from '@/lib/use-member-colors';
@@ -10,6 +10,7 @@ import MemberAvatar from '@/components/MemberAvatar';
 import TaskForm from './TaskForm';
 import { useSheetsData } from '@/lib/sheets-context';
 import { useDataSystem } from '@/lib/use-data-system';
+import { useToast, ToastContainer } from '@/components/ui/Toast';
 
 function isOverdue(task: TaskRow) {
   if (!task.endDate) return false;
@@ -29,13 +30,14 @@ export default function MyTasksModule() {
   const { tasks: sheetsTasks, loading: sheetsLoading, config: sheetsConfig, refresh, lastFetch } = useSheetsData();
   const { members } = useDataSystem();
   const { getColor, setColor, resetColor, hasCustomColor } = useMemberColors();
+  const { toasts, push: pushToast, dismiss } = useToast();
   const colorInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [selectedMember, setSelectedMember] = useState('');
-  const [mockTasksByMember, setMockTasksByMember] = useState<Record<string, TaskRow[]>>({});
-  const [mockLoading, setMockLoading] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskRow | null>(null);
+  // Local overrides — patch ngay sau khi save, không cần reload
+  const [localOverrides, setLocalOverrides] = useState<Record<string, Partial<TaskRow>>>({});
 
   // Chọn thành viên đầu tiên khi members load xong
   useEffect(() => {
@@ -44,25 +46,16 @@ export default function MyTasksModule() {
     }
   }, [members, selectedMember]);
 
-  useEffect(() => {
-    if (sheetsConfig || !selectedMember) return;
-    if (mockTasksByMember[selectedMember]) return;
-    setMockLoading(true);
-    api.getMyTasks(selectedMember).then(data => {
-      setMockTasksByMember(prev => ({ ...prev, [selectedMember]: data }));
-      setMockLoading(false);
-    });
-  }, [selectedMember, sheetsConfig]);
-
-  const loading = sheetsConfig ? sheetsLoading : mockLoading;
-  const tasks = sheetsConfig
-    ? sheetsTasks.filter(t => t.owner === selectedMember || t.sourceSheet === selectedMember)
-    : (mockTasksByMember[selectedMember] ?? []);
+  const loading = sheetsLoading;
+  const tasks = sheetsTasks
+    .filter(t => t.owner === selectedMember || t.sourceSheet === selectedMember)
+    .map(t => localOverrides[t.id] ? { ...t, ...localOverrides[t.id] } : t);
 
   // Thành viên có trong sheets data
   const availableMembers = sheetsConfig
     ? members.filter(m => sheetsConfig.selectedSheets.includes(m.name) || sheetsTasks.some(t => t.owner === m.name))
     : members;
+
 
   const sorted = useMemo(() => {
     return [...tasks].sort((a, b) => {
@@ -86,37 +79,25 @@ export default function MyTasksModule() {
     });
   }
 
+  async function handleDelete(task: TaskRow) {
+    if (!confirm(`Xóa task "${task.task}"?`)) return;
+    setLocalOverrides(prev => { const n = { ...prev }; delete n[task.id]; return n; });
+    try {
+      await api.deleteMyTask(task.sourceSheet ?? selectedMember, task.id, task.task);
+      pushToast('success', 'Đã xóa task', task.task);
+    } catch {
+      pushToast('error', 'Xóa thất bại', 'Không thể xóa task khỏi sheet');
+    }
+    refresh();
+  }
+
   function handleSave(data: Partial<TaskRow>) {
     if (editingTask) {
-      setMockTasksByMember(prev => ({
-        ...prev,
-        [selectedMember]: (prev[selectedMember] ?? []).map(t =>
-          t.id === editingTask.id ? { ...t, ...data } : t
-        ),
-      }));
-    } else {
-      const newTask: TaskRow = {
-        id: `${selectedMember.slice(0, 2).toUpperCase()}${Date.now()}`,
-        project:   data.project   ?? '',
-        task:      data.task      ?? '',
-        owner:     selectedMember,
-        role:      data.role      ?? null,
-        status:    (data.status as TaskRow['status']) ?? 'Chuẩn bị đưa vào làm',
-        startDate: data.startDate ?? null,
-        endDate:   data.endDate   ?? null,
-        detail:    data.detail    ?? null,
-        link:      data.link      ?? null,
-        note:      null,
-        sourceSheet: selectedMember,
-        sourceRow:   0,
-        itTaskId:    null,
-        lastModified: new Date().toISOString(),
-      };
-      setMockTasksByMember(prev => ({
-        ...prev,
-        [selectedMember]: [...(prev[selectedMember] ?? []), newTask],
-      }));
+      // Cập nhật ngay trên UI, không cần reload
+      setLocalOverrides(prev => ({ ...prev, [editingTask.id]: { ...(prev[editingTask.id] ?? {}), ...data } }));
     }
+    // Sau khi thêm mới → refresh để lấy data thật từ sheet
+    if (!editingTask) refresh();
   }
 
   return (
@@ -124,9 +105,7 @@ export default function MyTasksModule() {
       {/* Member sidebar */}
       <aside className="w-48 shrink-0 space-y-1">
         {availableMembers.map(m => {
-          const count = sheetsConfig
-            ? sheetsTasks.filter(t => (t.owner === m.name || t.sourceSheet === m.name) && ACTIVE_STATUSES.includes(t.status)).length
-            : (mockTasksByMember[m.name]?.filter(t => ACTIVE_STATUSES.includes(t.status)).length ?? 0);
+          const count = sheetsTasks.filter(t => (t.owner === m.name || t.sourceSheet === m.name) && ACTIVE_STATUSES.includes(t.status)).length;
           const currentColor = getColor(m.name, nameToMemberItem(m.name).color);
           const isCustom     = hasCustomColor(m.name);
           return (
@@ -304,6 +283,12 @@ export default function MyTasksModule() {
                             >
                               <Edit2 size={13} />
                             </button>
+                            <button
+                              onClick={() => handleDelete(task)}
+                              className="text-gray-400 hover:text-red-500"
+                            >
+                              <Trash2 size={13} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -325,6 +310,8 @@ export default function MyTasksModule() {
           onSave={handleSave}
         />
       )}
+
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }
