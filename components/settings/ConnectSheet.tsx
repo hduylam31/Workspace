@@ -56,7 +56,7 @@ export default function ConnectSheet({ onClose, onConnect }: Props) {
   const [apiKey, setApiKey]                   = useState('');
   const [masterDataSheet,    setMasterDataSheet]    = useState(DEFAULT_FORM_VALUES.masterDataSheet);
   const [reportSheet,        setReportSheet]        = useState(DEFAULT_FORM_VALUES.reportSheet);
-  const [appsScriptUrl,      setAppsScriptUrl]      = useState('');
+  const [appsScriptUrl,      setAppsScriptUrl]      = useState(DEFAULT_FORM_VALUES.appsScriptUrl);
   const [duAnSheet,          setDuAnSheet]          = useState(DEFAULT_FORM_VALUES.duAnSheet);
   const [roleToTaskSheet,    setRoleToTaskSheet]    = useState(DEFAULT_FORM_VALUES.roleToTaskSheet);
   const [roleToProjectSheet, setRoleToProjectSheet] = useState(DEFAULT_FORM_VALUES.roleToProjectSheet);

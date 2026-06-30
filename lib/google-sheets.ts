@@ -43,6 +43,7 @@ export const DEFAULT_FORM_VALUES = {
   roleToTaskSheet:    'Role to Task',
   roleToProjectSheet: 'Role to Project',
   itTrackerSpreadsheetId: '1UE90IF07JY0B-Gj93I9XJzHG5y14wGemPoBbrAjUm9s',
+  appsScriptUrl: 'https://script.google.com/macros/s/AKfycbzltdXglHjJkq9L-0CmCGsUvQjcgsMR_N3KHWPaWPcV5j5rMdG3qxkRQjvj0B1frwc_ZA/exec',
 };
 
 // Lấy danh sách tên sheets trong spreadsheet
